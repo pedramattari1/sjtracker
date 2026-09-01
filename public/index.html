@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>L.I.V.E. SJ — Prospect Tracker</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:#f5f5f3;color:#1a1a18;min-height:100vh;padding:2rem 1rem}
+  .page{max-width:1300px;margin:0 auto}
+  .header{margin-bottom:1.5rem}
+  .header h1{font-size:20px;font-weight:600}
+  .header p{font-size:13px;color:#5f5e5a;margin-top:4px}
+  .sync-note{display:inline-block;font-size:11px;font-weight:600;padding:3px 9px;border-radius:20px;margin-top:8px}
+  .sync-live{background:#eaf3de;color:#3b6d11}
+  .sync-err{background:#fcebeb;color:#a32d2d}
+  .summary{display:grid;grid-template-columns:repeat(5,1fr);gap:12px;margin-bottom:1.5rem}
+  @media(max-width:700px){.summary{grid-template-columns:repeat(2,1fr)}}
+  .stat{background:#fff;border-radius:8px;border:0.5px solid #d3d1c7;padding:1rem;text-align:center}
+  .stat-n{font-size:26px;font-weight:600}
+  .stat-l{font-size:12px;color:#5f5e5a;margin-top:3px}
+  .toolbar{display:flex;justify-content:space-between;align-items:center;margin-bottom:0.75rem;flex-wrap:wrap;gap:10px}
+  .toolbar h2{font-size:15px;font-weight:600}
+  .filters{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:1rem}
+  .filter-btn{font-size:12px;padding:5px 12px;border-radius:20px;border:0.5px solid #d3d1c7;background:#fff;color:#5f5e5a;cursor:pointer}
+  .filter-btn.active{background:#185fa5;color:#fff;border-color:#185fa5}
+  .btn{font-size:13px;font-weight:500;padding:7px 14px;border-radius:8px;border:0.5px solid #888780;background:#fff;color:#1a1a18;cursor:pointer;display:inline-flex;align-items:center;gap:6px}
+  .btn:hover{background:#f1efe8}
+  .btn-primary{background:#185fa5;color:#fff;border-color:#185fa5}
+  .btn-primary:hover{background:#0c447c;border-color:#0c447c}
+  .tbl-wrap{overflow-x:auto;border:0.5px solid #d3d1c7;border-radius:12px;background:#fff}
+  table{width:100%;border-collapse:collapse;min-width:1020px}
+  th{font-size:11px;font-weight:600;color:#5f5e5a;text-align:left;padding:10px 14px;border-bottom:0.5px solid #d3d1c7;background:#f1efe8;white-space:nowrap;text-transform:uppercase;letter-spacing:0.04em;cursor:pointer;user-select:none}
+  th:hover{background:#e8e6de}
+  td{font-size:13px;color:#1a1a18;padding:10px 14px;border-bottom:0.5px solid #d3d1c7;vertical-align:top}
+  tr:last-child td{border-bottom:none}
+  tr:hover td{background:#f5f5f3}
+  .name-cell{font-weight:600}
+  .sub-cell{color:#5f5e5a;font-size:12px;margin-top:2px}
+  .pref-cell{font-size:12px;color:#5f5e5a}
+  .notes-cell{color:#5f5e5a;font-size:12px;max-width:240px;white-space:pre-wrap}
+  .actions{display:flex;gap:6px;white-space:nowrap}
+  .act-btn{font-size:11px;padding:3px 9px;border-radius:6px;border:0.5px solid #d3d1c7;background:#fff;color:#1a1a18;cursor:pointer}
+  .act-btn:hover{background:#f1efe8}
+  .act-del{color:#a32d2d;border-color:#f0959580}
+  .act-del:hover{background:#fcebeb}
+  .badge{display:inline-block;font-size:11px;font-weight:600;padding:3px 9px;border-radius:20px;white-space:nowrap}
+  .b-warm{background:#eaf3de;color:#3b6d11}
+  .b-new{background:#e6f1fb;color:#185fa5}
+  .b-follow{background:#faeeda;color:#854f0b}
+  .b-cold{background:#fcebeb;color:#a32d2d}
+  .b-none{background:#f1efe8;color:#5f5e5a;border:0.5px solid #d3d1c7}
+  .b-yes{background:#eaf3de;color:#3b6d11}
+  .b-sched{background:#faeeda;color:#854f0b}
+  .b-stop{background:#fcebeb;color:#a32d2d}
+  .overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.4);z-index:100;align-items:center;justify-content:center;padding:1rem}
+  .overlay.open{display:flex}
+  .modal{background:#fff;border-radius:12px;border:0.5px solid #d3d1c7;padding:1.5rem;width:100%;max-width:560px;max-height:92vh;overflow-y:auto}
+  .modal h3{font-size:16px;font-weight:600;margin-bottom:1.25rem}
+  .field{margin-bottom:0.9rem}
+  .field label{font-size:12px;font-weight:600;color:#5f5e5a;display:block;margin-bottom:4px;text-transform:uppercase;letter-spacing:0.04em}
+  .field input,.field select,.field textarea{width:100%;font-size:13px;padding:8px 10px;border:0.5px solid #888780;border-radius:8px;background:#fff;color:#1a1a18;font-family:inherit}
+  .field input:focus,.field select:focus,.field textarea:focus{outline:2px solid #378add;outline-offset:1px}
+  .field textarea{resize:vertical;min-height:80px}
+  .row2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  .row3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px}
+  .modal-acts{display:flex;gap:10px;margin-top:1.25rem;justify-content:flex-end}
+  .err{font-size:12px;color:#a32d2d;margin-top:4px;display:none}
+  .empty-row td{text-align:center;color:#888780;padding:2.5rem;font-size:14px}
+  .toast{position:fixed;bottom:1.5rem;right:1.5rem;background:#1a1a18;color:#fff;font-size:13px;padding:10px 18px;border-radius:8px;opacity:0;pointer-events:none;transition:opacity 0.25s;z-index:200}
+  .toast.show{opacity:1}
+  .saved-note{font-size:12px;color:#5f5e5a;margin-top:0.5rem;text-align:right}
+  .count-note{font-size:12px;color:#5f5e5a}
+</style>
+</head>
+<body>
+<div class="page">
+  <div class="header">
+    <h1>L.I.V.E. SJ — Prospect Tracker</h1>
+    <p>City of San José subsidy program referrals via Josh Horne · The Fay at 10 E. Reed St.</p>
+    <span class="sync-note sync-live" id="sync-note">● Connecting…</span>
+  </div>
+  <div class="summary" id="summary"></div>
+  <div class="toolbar">
+    <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+      <h2>Prospects</h2>
+      <span class="count-note" id="count-note"></span>
+    </div>
+    <button class="btn btn-primary" onclick="openModal()">+ Add prospect</button>
+  </div>
+  <div class="filters" id="filters"></div>
+  <div class="tbl-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th onclick="sortBy('name')">#&nbsp; Name ↕</th>
+          <th>Email</th>
+          <th onclick="sortBy('referred')" style="white-space:nowrap">Contacted ↕</th>
+          <th>Responded</th>
+          <th onclick="sortBy('status')">Status ↕</th>
+          <th>Unit pref.</th>
+          <th>Toured</th>
+          <th onclick="sortBy('stage')">Leasing stage ↕</th>
+          <th>Notes / feedback</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody id="tbody"></tbody>
+    </table>
+  </div>
+  <p class="saved-note" id="saved-note"></p>
+</div>
+
+<div class="overlay" id="overlay" onclick="bgClick(event)">
+  <div class="modal" onclick="event.stopPropagation()">
+    <h3 id="modal-title">Add prospect</h3>
+    <input type="hidden" id="edit-id" value="">
+    <div class="row2">
+      <div class="field">
+        <label>First name</label>
+        <input id="f-fname" placeholder="First name">
+        <div class="err" id="e-fname">Enter a first name.</div>
+      </div>
+      <div class="field"><label>Last name</label><input id="f-lname" placeholder="Last name"></div>
+    </div>
+    <div class="row2">
+      <div class="field"><label>Email</label><input id="f-email" type="email" placeholder="name@email.com"></div>
+      <div class="field"><label>Phone</label><input id="f-phone" placeholder="e.g. (408) 555-0100"></div>
+    </div>
+    <div class="row2">
+      <div class="field"><label>Date contacted</label><input id="f-referred" type="date"></div>
+      <div class="field">
+        <label>Unit preference</label>
+        <select id="f-unitpref">
+          <option value="">Not indicated</option>
+          <option value="Studio">Studio</option>
+          <option value="1 Bedroom">1 Bedroom</option>
+          <option value="2 Bedroom">2 Bedroom</option>
+          <option value="1BR or 2BR">1BR or 2BR</option>
+          <option value="TBD">TBD</option>
+        </select>
+      </div>
+    </div>
+    <div class="row3">
+      <div class="field">
+        <label>Responded?</label>
+        <select id="f-responded">
+          <option value="yes">Yes</option>
+          <option value="no">No — awaiting reply</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>Status</label>
+        <select id="f-status">
+          <option value="new">New — awaiting contact</option>
+          <option value="warm">Warm — in conversation</option>
+          <option value="follow">Follow-up needed</option>
+          <option value="cold">Unresponsive</option>
+          <option value="none">Not proceeding</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>Toured?</label>
+        <select id="f-toured">
+          <option value="no">No</option>
+          <option value="scheduled">Scheduled</option>
+          <option value="yes">Yes — completed</option>
+        </select>
+      </div>
+    </div>
+    <div class="field">
+      <label>Leasing stage</label>
+      <select id="f-stage">
+        <option value="Initial outreach">Initial outreach</option>
+        <option value="Scheduling call / tour">Scheduling call / tour</option>
+        <option value="Tour scheduled">Tour scheduled</option>
+        <option value="Tour completed">Tour completed</option>
+        <option value="Application in progress">Application in progress</option>
+        <option value="Application submitted">Application submitted</option>
+        <option value="Lease signed">Lease signed</option>
+        <option value="Not proceeding">Not proceeding</option>
+      </select>
+    </div>
+    <div class="field"><label>Notes / tour feedback</label><textarea id="f-notes" placeholder="Concerns, questions, feedback, next steps…"></textarea></div>
+    <div class="modal-acts">
+      <button class="btn" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-primary" id="save-btn" onclick="save()">Save prospect</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+// ============================================================
+//  CONFIG — paste your Railway API URL here after you deploy.
+//  Example: 'https://sj-tracker-production.up.railway.app'
+//  No trailing slash.
+// ============================================================
+var API_BASE = 'REPLACE_WITH_RAILWAY_URL';
+
+var DATA = [];
+var activeFilter='all';
+var sortCol='referred'; var sortDir=1;
+var modalOpen=false;
+
+var STATUS_CLS={warm:'b-warm',new:'b-new',follow:'b-follow',cold:'b-cold',none:'b-stop'};
+var STATUS_LBL={warm:'Warm',new:'New',follow:'Follow-up',cold:'Unresponsive',none:'Not proceeding'};
+var TOURED_CLS={yes:'b-yes',scheduled:'b-sched',no:'b-none'};
+var TOURED_LBL={yes:'Yes — done',scheduled:'Scheduled',no:'No'};
+
+function api(path,opts){ return fetch(API_BASE+path,Object.assign({headers:{'Content-Type':'application/json'}},opts)); }
+function setSync(ok,msg){
+  var el=document.getElementById('sync-note');
+  el.className='sync-note '+(ok?'sync-live':'sync-err');
+  el.textContent=(ok?'● Live · ':'● ')+msg;
+}
+
+async function refresh(){
+  try{
+    var res=await api('/api/prospects'); if(!res.ok) throw new Error(res.status);
+    DATA=await res.json();
+    setSync(true,'Synced '+new Date().toLocaleTimeString());
+    render();
+  }catch(e){ setSync(false,'Offline — retrying…'); }
+}
+
+async function writeRec(id,rec){
+  try{
+    if(id){ await api('/api/prospects/'+encodeURIComponent(id),{method:'PUT',body:JSON.stringify(rec)}); }
+    else{ await api('/api/prospects',{method:'POST',body:JSON.stringify(rec)}); }
+    await refresh();
+  }catch(e){ showToast('Could not save — check connection.'); }
+}
+async function removeRec(id){
+  try{ await api('/api/prospects/'+encodeURIComponent(id),{method:'DELETE'}); await refresh(); }
+  catch(e){ showToast('Could not remove — check connection.'); }
+}
+
+function fmtDate(d){if(!d)return'—';var p=d.split('-');return p[1]+'/'+p[2]+'/'+p[0].slice(2);}
+function esc(s){var d=document.createElement('div');d.textContent=s||'';return d.innerHTML;}
+
+function filtered(){
+  if(activeFilter==='all') return DATA;
+  return DATA.filter(function(r){return r.status===activeFilter;});
+}
+function sorted(arr){
+  return arr.slice().sort(function(a,b){
+    var av='',bv='';
+    if(sortCol==='name'){av=((a.lname||'')+(a.fname||'')).toLowerCase();bv=((b.lname||'')+(b.fname||'')).toLowerCase();}
+    else if(sortCol==='referred'){av=a.referred||'';bv=b.referred||'';}
+    else if(sortCol==='status'){av=a.status;bv=b.status;}
+    else if(sortCol==='stage'){av=a.stage;bv=b.stage;}
+    if(av<bv)return -1*sortDir;if(av>bv)return 1*sortDir;return 0;
+  });
+}
+function sortBy(col){ if(sortCol===col)sortDir*=-1; else{sortCol=col;sortDir=1;} render(); }
+
+function renderFilters(){
+  var counts={all:DATA.length,warm:0,new:0,follow:0,cold:0,none:0};
+  DATA.forEach(function(r){if(counts[r.status]!==undefined)counts[r.status]++;});
+  var labels={all:'All',warm:'Warm',new:'New',follow:'Follow-up',cold:'Unresponsive',none:'Not proceeding'};
+  document.getElementById('filters').innerHTML=Object.keys(labels).map(function(k){
+    return '<button class="filter-btn'+(activeFilter===k?' active':'')+'" onclick="setFilter(\''+k+'\')">'+labels[k]+' ('+counts[k]+')</button>';
+  }).join('');
+}
+function setFilter(f){activeFilter=f;render();}
+
+function render(){
+  var rows=sorted(filtered());
+  var tb=document.getElementById('tbody');
+  document.getElementById('count-note').textContent='Showing '+rows.length+' of '+DATA.length;
+  if(!rows.length){tb.innerHTML='<tr class="empty-row"><td colspan="10">No prospects match this filter.</td></tr>';renderSummary();renderFilters();return;}
+  tb.innerHTML=rows.map(function(r,idx){
+    return '<tr>'+
+      '<td><div class="name-cell">'+(idx+1)+'. '+esc((r.fname||'')+' '+(r.lname||''))+'</div></td>'+
+      '<td><div class="sub-cell">'+esc(r.email||'—')+(r.phone?'<br>'+esc(r.phone):'')+'</div></td>'+
+      '<td style="white-space:nowrap">'+fmtDate(r.referred)+'</td>'+
+      '<td><span class="badge '+(r.responded==='yes'?'b-yes':'b-none')+'">'+(r.responded==='yes'?'Yes':'No')+'</span></td>'+
+      '<td><span class="badge '+(STATUS_CLS[r.status]||'b-new')+'">'+(STATUS_LBL[r.status]||r.status)+'</span></td>'+
+      '<td class="pref-cell">'+(r.unitpref||'—')+'</td>'+
+      '<td><span class="badge '+(TOURED_CLS[r.toured]||'b-none')+'">'+(TOURED_LBL[r.toured]||r.toured)+'</span></td>'+
+      '<td style="font-size:12px">'+esc(r.stage||'—')+'</td>'+
+      '<td class="notes-cell">'+esc(r.notes||'—')+'</td>'+
+      '<td><div class="actions">'+
+        '<button class="act-btn" onclick="editRow(\''+r._id+'\')">Edit</button>'+
+        '<button class="act-btn act-del" onclick="deleteRow(\''+r._id+'\')">Delete</button>'+
+      '</div></td>'+
+    '</tr>';
+  }).join('');
+  renderSummary();
+  renderFilters();
+}
+
+function renderSummary(){
+  var total=DATA.length;
+  var responded=DATA.filter(function(r){return r.responded==='yes';}).length;
+  var toured=DATA.filter(function(r){return r.toured==='yes'||r.toured==='scheduled';}).length;
+  var follow=DATA.filter(function(r){return r.status==='follow'||r.status==='cold';}).length;
+  var applying=DATA.filter(function(r){return r.stage==='Application in progress'||r.stage==='Application submitted'||r.stage==='Lease signed';}).length;
+  document.getElementById('summary').innerHTML=
+    stat(total,'Total prospects')+stat(responded,'Responded')+stat(toured,'Tour sched. / done')+stat(follow,'Need follow-up')+stat(applying,'Applying / leased');
+}
+function stat(n,l){return'<div class="stat"><div class="stat-n">'+n+'</div><div class="stat-l">'+l+'</div></div>';}
+
+function findRec(id){for(var i=0;i<DATA.length;i++){if(DATA[i]._id===id)return DATA[i];}return null;}
+
+function openModal(data,id){
+  modalOpen=true;
+  document.getElementById('modal-title').textContent=id?'Edit prospect':'Add prospect';
+  document.getElementById('edit-id').value=id||'';
+  var d=data||{};
+  ['fname','lname','email','phone','referred','notes'].forEach(function(k){document.getElementById('f-'+k).value=d[k]||'';});
+  document.getElementById('f-responded').value=d.responded||'no';
+  document.getElementById('f-status').value=d.status||'new';
+  document.getElementById('f-unitpref').value=d.unitpref||'';
+  document.getElementById('f-toured').value=d.toured||'no';
+  document.getElementById('f-stage').value=d.stage||'Initial outreach';
+  document.getElementById('e-fname').style.display='none';
+  document.getElementById('overlay').classList.add('open');
+}
+function closeModal(){modalOpen=false;document.getElementById('overlay').classList.remove('open');}
+function bgClick(e){if(e.target===document.getElementById('overlay'))closeModal();}
+function editRow(id){openModal(findRec(id),id);}
+function deleteRow(id){
+  var r=findRec(id); if(!r)return;
+  if(!confirm('Remove '+(r.fname||'')+' '+(r.lname||'')+'?'))return;
+  removeRec(id);showToast('Prospect removed.');
+}
+function save(){
+  var fname=document.getElementById('f-fname').value.trim();
+  if(!fname){document.getElementById('e-fname').style.display='block';document.getElementById('f-fname').focus();return;}
+  document.getElementById('e-fname').style.display='none';
+  var rec={
+    fname:fname,lname:document.getElementById('f-lname').value.trim(),
+    email:document.getElementById('f-email').value.trim(),phone:document.getElementById('f-phone').value.trim(),
+    referred:document.getElementById('f-referred').value,
+    responded:document.getElementById('f-responded').value,
+    status:document.getElementById('f-status').value,
+    unitpref:document.getElementById('f-unitpref').value,
+    toured:document.getElementById('f-toured').value,
+    stage:document.getElementById('f-stage').value,
+    notes:document.getElementById('f-notes').value.trim()
+  };
+  var id=document.getElementById('edit-id').value;
+  writeRec(id,rec);
+  showToast(id?'Prospect updated.':'Prospect added.');
+  closeModal();
+}
+function showToast(msg){
+  var t=document.getElementById('toast');t.textContent=msg;t.classList.add('show');
+  setTimeout(function(){t.classList.remove('show');},2500);
+}
+
+// initial load + poll every 5s (skip while a modal is open so edits aren't disturbed)
+refresh();
+setInterval(function(){ if(!modalOpen) refresh(); }, 5000);
+</script>
+</body>
+</html>
