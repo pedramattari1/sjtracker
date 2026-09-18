@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import { NavLink } from "react-router-dom";
-import { UserButton } from "@clerk/clerk-react";
-import { LayoutDashboard, Users, FileText } from "lucide-react";
+import { UserButton, useClerk } from "@clerk/clerk-react";
+import { LayoutDashboard, Users, FileText, LogOut } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const NAV = [
@@ -11,6 +11,7 @@ const NAV = [
 ];
 
 export function AppShell({ children }: { children: ReactNode }) {
+  const { signOut } = useClerk();
   return (
     <div className="flex min-h-screen bg-neutral-50 text-neutral-900">
       <aside className="flex w-56 flex-col border-r border-neutral-200 bg-white">
@@ -37,9 +38,19 @@ export function AppShell({ children }: { children: ReactNode }) {
             </NavLink>
           ))}
         </nav>
-        <div className="flex items-center gap-2 border-t border-neutral-200 p-3">
-          <UserButton />
-          <span className="text-xs text-neutral-500">Signed in</span>
+        <div className="border-t border-neutral-200 p-3">
+          <div className="mb-2 flex items-center gap-2">
+            <UserButton afterSignOutUrl="/" />
+            <span className="text-xs text-neutral-500">Signed in</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => void signOut({ redirectUrl: "/" })}
+            className="flex w-full items-center justify-center gap-2 rounded-md border border-neutral-200 px-3 py-2 text-sm font-medium text-neutral-600 transition-colors hover:bg-neutral-100 hover:text-neutral-900"
+          >
+            <LogOut className="h-4 w-4" />
+            Sign out
+          </button>
         </div>
       </aside>
       <main className="flex-1 overflow-x-auto p-6">{children}</main>
