@@ -25,11 +25,11 @@ export default function App() {
       <SignedIn>
         <AppShell>
           <Routes>
-            <Route path="/" element={<Navigate to="/prospects" replace />} />
+            <Route path="/" element={<Navigate to="/dashboard" replace />} />
             <Route path="/dashboard" element={<Dashboard />} />
             <Route path="/prospects" element={<Prospects />} />
             <Route path="/reports" element={<Reports />} />
-            <Route path="*" element={<Navigate to="/prospects" replace />} />
+            <Route path="*" element={<Navigate to="/dashboard" replace />} />
           </Routes>
         </AppShell>
       </SignedIn>

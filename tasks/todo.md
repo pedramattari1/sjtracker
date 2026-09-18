@@ -70,6 +70,41 @@ buildable (empty) `/web` app on a new branch. **No code features, no DB changes,
       the security-critical cases.
 - [x] `main` untouched.
 
+## Phase 2 — Dashboard view (✅ DONE 2026-09-18)
+
+### Steps
+- [x] 1. Shared `lib/filters.ts`: tile predicates + stage order + applying set —
+       single source of truth for counts and deep-link filters.
+- [x] 2. Dashboard: 5 status tiles.
+- [x] 3. Unit-type breakdown with counts (incl. Not indicated).
+- [x] 4. Leasing-stage funnel/bars with counts, in leasing order.
+- [x] 5. Deep-link tiles/segments into Prospects; Prospects applies a single
+       URL-driven filter with a "Filtered: … / Clear" banner.
+- [x] Dashboard is now the landing route (`/` → `/dashboard`).
+
+## Review — Phase 2 (2026-09-18)
+**What changed:** new `lib/filters.ts` (tile predicates matching the current app,
+`STAGE_ORDER`, `APPLYING_STAGES`, `UNIT_ORDER`, `resolveFilter`). `Dashboard.tsx`
+renders 5 status tiles, a unit-preference breakdown, and a leasing-stage bar chart,
+all from live API data; every tile/segment is a deep-link into `/prospects?…`.
+`Prospects.tsx` reads the URL param via `resolveFilter` and shows a filtered view
+with a clear banner (full filter UI remains Phase 3). Landing route is now Dashboard.
+Read-only; no `/server`, schema, or data changes.
+
+**How verified:**
+- typecheck clean; lint clean (0 warnings); build clean (`✓ 1639 modules`).
+- Counts verified against live data (60 rows) with the same predicates:
+  - **Tiles:** Total 60 · Responded 22 · Tour sched./done 19 · Need follow-up 28 ·
+    Applying/leased 3.
+  - **Unit:** Studio 0 · 1 Bedroom 28 · 2 Bedroom 8 · 1BR or 2BR 1 · TBD 3 ·
+    Not indicated 20 → sums to 60. ✓
+  - **Stage:** Initial outreach 10 · Scheduling 30 · Tour scheduled 10 · Tour
+    completed 4 · App in progress 1 · Submitted 1 · Lease signed 1 · Not proceeding 3
+    → sums to 60. ✓
+  Both breakdowns sum to the total row count — internal consistency confirmed.
+
+**Next:** Phase 3 (Prospects filters/search/inline edit/CRUD) — NOT started.
+
 ## Review — Phase 1 (2026-09-18)
 **What changed:**
 - `/web`: `ClerkProvider` (main.tsx) gates the app — `<SignedOut>` renders only the

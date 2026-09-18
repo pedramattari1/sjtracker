@@ -1,7 +1,9 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Link, useSearchParams } from "react-router-dom";
 import { useAuth } from "@clerk/clerk-react";
 import { fetchProspects } from "@/lib/api";
 import type { Prospect } from "@/lib/types";
+import { resolveFilter } from "@/lib/filters";
 import { cn } from "@/lib/utils";
 
 const STATUS_LBL: Record<string, string> = {
@@ -51,6 +53,7 @@ function Badge({ label, cls }: { label: string; cls: string }) {
 
 export function Prospects() {
   const { getToken } = useAuth();
+  const [searchParams] = useSearchParams();
   const [rows, setRows] = useState<Prospect[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -78,6 +81,12 @@ export function Prospects() {
     };
   }, [load]);
 
+  const filter = useMemo(() => resolveFilter(searchParams), [searchParams]);
+  const visible = useMemo(
+    () => (filter ? rows.filter(filter.predicate) : rows),
+    [filter, rows],
+  );
+
   return (
     <div>
       <div className="mb-4 flex items-center justify-between">
@@ -88,10 +97,21 @@ export function Prospects() {
               ? "Loading…"
               : error
                 ? `Error: ${error}`
-                : `${rows.length} prospects${syncedAt ? ` · synced ${syncedAt}` : ""}`}
+                : `${visible.length}${filter ? ` of ${rows.length}` : ""} prospects${syncedAt ? ` · synced ${syncedAt}` : ""}`}
           </p>
         </div>
       </div>
+
+      {filter ? (
+        <div className="mb-3 flex items-center gap-3 rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm">
+          <span className="text-neutral-600">
+            Filtered: <span className="font-medium text-neutral-900">{filter.label}</span>
+          </span>
+          <Link to="/prospects" className="text-neutral-500 underline hover:text-neutral-800">
+            Clear
+          </Link>
+        </div>
+      ) : null}
 
       <div className="overflow-x-auto rounded-xl border border-neutral-200 bg-white">
         <table className="w-full min-w-[1020px] border-collapse">
@@ -109,7 +129,7 @@ export function Prospects() {
             </tr>
           </thead>
           <tbody>
-            {rows.map((r, i) => (
+            {visible.map((r, i) => (
               <tr key={r._id} className="align-top hover:bg-neutral-50">
                 <td className="border-b border-neutral-100 px-3 py-2.5 text-sm font-semibold">
                   {i + 1}. {r.fname} {r.lname}
@@ -159,13 +179,13 @@ export function Prospects() {
                 </td>
               </tr>
             ))}
-            {!loading && rows.length === 0 && !error ? (
+            {!loading && visible.length === 0 && !error ? (
               <tr>
                 <td
                   colSpan={9}
                   className="px-3 py-10 text-center text-sm text-neutral-400"
                 >
-                  No prospects.
+                  {filter ? "No prospects match this filter." : "No prospects."}
                 </td>
               </tr>
             ) : null}
