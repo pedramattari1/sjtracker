@@ -18,3 +18,10 @@ export interface Prospect {
 
 /** The writable fields (everything except the server-managed id/order). */
 export type ProspectInput = Omit<Prospect, "_id" | "order">;
+
+/** City-report recipient. */
+export interface Recipient {
+  id: string;
+  email: string;
+  name: string;
+}

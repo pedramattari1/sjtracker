@@ -8,6 +8,7 @@ const { clerkMiddleware, getAuth } = require('@clerk/express');
 const { buildCsv } = require('./lib/csv');
 const { filterProspects } = require('./lib/prospectsFilter');
 const { buildReportPayload } = require('./lib/report');
+const recipientsDb = require('./lib/recipients');
 
 const app = express();
 app.use(cors());               // CORS so the Vercel frontend can call this
@@ -99,6 +100,7 @@ async function initDb() {
     }
     console.log('Seeded ' + SEED.length + ' prospects.');
   }
+  await recipientsDb.ensureTable(pool); // additive; does not touch prospects
 }
 
 // --- Routes ---
@@ -123,17 +125,20 @@ app.post('/api/reports/city-export', async (req, res) => {
   try {
     const { rows } = await pool.query('SELECT id, ord, data FROM prospects ORDER BY ord ASC, id ASC');
     const records = rows.map(rowToRecord);
-    const recipients = (process.env.CITY_REPORT_RECIPIENTS || '')
-      .split(',').map((s) => s.trim()).filter(Boolean);
+    // Recipients are managed in-app (report_recipients table), not env.
+    const recipients = (await recipientsDb.listRecipients(pool))
+      .map((r) => r.email).filter(Boolean);
     const from = process.env.RESEND_FROM || 'L.I.V.E. SJ Reports <reports@wimmops.com>';
+
+    // Empty list -> clean no-op regardless of RESEND config.
+    if (recipients.length === 0) {
+      return res.json({ ok: true, emailed: false, reason: 'no recipients', prospects: records.length });
+    }
     const payload = buildReportPayload({ records, from, recipients, query: req.query });
     const count = payload._count;
 
     if (!process.env.RESEND_API_KEY) {
       return res.json({ ok: true, emailed: false, reason: 'RESEND_API_KEY not set', prospects: count, recipients: recipients.length });
-    }
-    if (recipients.length === 0) {
-      return res.json({ ok: true, emailed: false, reason: 'no recipients configured', prospects: count });
     }
     const { Resend } = require('resend');
     const resend = new Resend(process.env.RESEND_API_KEY);
@@ -146,6 +151,32 @@ app.post('/api/reports/city-export', async (req, res) => {
     }
     return res.json({ ok: true, emailed: true, prospects: count, recipients: recipients.length });
   } catch (e) { console.error(e); res.status(500).json({ error: 'report_failed' }); }
+});
+
+// ---- City-report recipients (Clerk-protected CRUD) ----
+app.get('/api/recipients', auth, async (_req, res) => {
+  try {
+    res.json(await recipientsDb.listRecipients(pool));
+  } catch (e) { console.error(e); res.status(500).json({ error: 'read_failed' }); }
+});
+
+app.post('/api/recipients', auth, async (req, res) => {
+  try {
+    const email = (req.body && req.body.email ? String(req.body.email) : '').trim();
+    const name = (req.body && req.body.name ? String(req.body.name) : '').trim();
+    if (!email || !email.includes('@')) {
+      return res.status(400).json({ error: 'invalid_email' });
+    }
+    const rec = await recipientsDb.addRecipient(pool, { email, name });
+    res.json(rec);
+  } catch (e) { console.error(e); res.status(500).json({ error: 'create_failed' }); }
+});
+
+app.delete('/api/recipients/:id', auth, async (req, res) => {
+  try {
+    await recipientsDb.removeRecipient(pool, req.params.id);
+    res.json({ ok: true });
+  } catch (e) { console.error(e); res.status(500).json({ error: 'delete_failed' }); }
 });
 
 // CSV export — honors the same filter query params as the Prospects view.

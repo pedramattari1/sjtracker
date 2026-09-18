@@ -1,4 +1,4 @@
-import type { Prospect, ProspectInput } from "@/lib/types";
+import type { Prospect, ProspectInput, Recipient } from "@/lib/types";
 
 const BASE = import.meta.env.VITE_API_BASE_URL;
 
@@ -85,6 +85,42 @@ export async function downloadProspectsCsv(
   a.click();
   a.remove();
   URL.revokeObjectURL(url);
+}
+
+// ---- City-report recipients ----
+export async function fetchRecipients(getToken: TokenGetter): Promise<Recipient[]> {
+  const res = await fetch(`${BASE}/api/recipients`, {
+    headers: await authHeaders(getToken),
+  });
+  if (!res.ok) throw new Error(`GET /api/recipients failed: ${res.status}`);
+  return (await res.json()) as Recipient[];
+}
+
+export async function addRecipient(
+  getToken: TokenGetter,
+  rec: { email: string; name: string },
+): Promise<Recipient> {
+  const res = await fetch(`${BASE}/api/recipients`, {
+    method: "POST",
+    headers: await authHeaders(getToken),
+    body: JSON.stringify(rec),
+  });
+  if (!res.ok) {
+    const msg = res.status === 400 ? "Enter a valid email." : `Add failed: ${res.status}`;
+    throw new Error(msg);
+  }
+  return (await res.json()) as Recipient;
+}
+
+export async function deleteRecipient(
+  getToken: TokenGetter,
+  id: string,
+): Promise<void> {
+  const res = await fetch(`${BASE}/api/recipients/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+    headers: await authHeaders(getToken),
+  });
+  if (!res.ok) throw new Error(`DELETE /api/recipients/${id} failed: ${res.status}`);
 }
 
 /** Build a full ProspectInput from a possibly-partial record (fills blanks). */

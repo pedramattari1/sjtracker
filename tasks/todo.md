@@ -157,6 +157,39 @@ read-only Reports view (cadence + recipients, recipients optional via
 - Add GitHub repo secrets `API_BASE_URL` + `CRON_SECRET` (same value as Railway).
 - Run the workflow via **workflow_dispatch** to confirm real delivery to an inbox.
 
+**Next:** Phase 5.5 (in-app recipient management).
+
+## Phase 5.5 — In-app recipient management (✅ DONE 2026-09-18)
+
+### Steps
+- [x] 1. `server/lib/recipients.js`: `ensureTable` (additive `report_recipients`) +
+       `listRecipients`/`addRecipient`/`removeRecipient` — standalone, DB-tested.
+- [x] 2. `server.js`: Clerk-protected `GET/POST/DELETE /api/recipients`; `initDb`
+       ensures the table.
+- [x] 3. `city-export`: reads recipients from the table; empty → clean no-op.
+- [x] 4. `web`: Reports view lists/adds/removes recipients via the protected API.
+
+### Review
+**What changed:** new additive `report_recipients` table (created in `initDb`;
+`prospects` untouched); `server/lib/recipients.js` (standalone CRUD); Clerk-protected
+`GET/POST/DELETE /api/recipients`; `POST /api/reports/city-export` now reads the
+table (env `CITY_REPORT_RECIPIENTS` no longer used) and no-ops cleanly on an empty
+list; Reports view rewritten to list/add/remove recipients (email + optional name)
+via the protected API. `city-export` stays CRON_SECRET-guarded.
+
+**How verified:**
+- typecheck / lint / build clean; `node --check server.js` OK.
+- **CRUD DB round-trip** (via the functions the endpoints call): 0 → add×2 → 2 →
+  remove 1 → 1 → remove → 0.
+- **Endpoint gating:** `GET /api/recipients` without a token → 401.
+- **Report reads table + no-op:** empty table → `emailed:false, "no recipients"`
+  (200, no crash); after inserting one recipient → `recipients:1`.
+- **Additive:** both `prospects` and `report_recipients` present; `prospects` still
+  33 rows, untouched.
+
+**Left to Pedram:** manage the recipient list in-app (Reports view); Phase 5's
+Railway/GitHub secrets still needed for real delivery.
+
 **Next:** Phase 6 (optional extras) — NOT started.
 
 ## Review — Phase 3 (2026-09-18)
