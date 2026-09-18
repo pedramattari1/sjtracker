@@ -4,10 +4,21 @@
 const express = require('express');
 const cors = require('cors');
 const { Pool } = require('pg');
+const { clerkMiddleware, getAuth } = require('@clerk/express');
 
 const app = express();
-app.use(cors());               // open CORS so the Vercel frontend can call this
+app.use(cors());               // CORS so the Vercel frontend can call this
 app.use(express.json());
+app.use(clerkMiddleware());    // attaches auth to req; verifies the Clerk session
+
+// Gate every /api/prospects route: no/invalid Clerk token -> 401 (JSON, not a
+// redirect — this is an API). The health route (GET /) stays public. The Phase 5
+// report route will use a separate CRON_SECRET guard, not Clerk.
+function auth(req, res, next) {
+  const { userId } = getAuth(req);
+  if (!userId) return res.status(401).json({ error: 'unauthorized' });
+  next();
+}
 
 // Railway injects DATABASE_URL when you attach a Postgres service.
 // Internal Railway connections don't need SSL; set DATABASE_SSL=true only if
@@ -90,14 +101,14 @@ async function initDb() {
 // --- Routes ---
 app.get('/', (_req, res) => res.json({ ok: true, service: 'sj-tracker-api' }));
 
-app.get('/api/prospects', async (_req, res) => {
+app.get('/api/prospects', auth, async (_req, res) => {
   try {
     const { rows } = await pool.query('SELECT id, ord, data FROM prospects ORDER BY ord ASC, id ASC');
     res.json(rows.map(rowToRecord));
   } catch (e) { console.error(e); res.status(500).json({ error: 'read_failed' }); }
 });
 
-app.post('/api/prospects', async (req, res) => {
+app.post('/api/prospects', auth, async (req, res) => {
   try {
     const id = newId();
     const ord = Date.now();
@@ -107,7 +118,7 @@ app.post('/api/prospects', async (req, res) => {
   } catch (e) { console.error(e); res.status(500).json({ error: 'create_failed' }); }
 });
 
-app.put('/api/prospects/:id', async (req, res) => {
+app.put('/api/prospects/:id', auth, async (req, res) => {
   try {
     const data = clean(req.body || {});
     const r = await pool.query('UPDATE prospects SET data = $2 WHERE id = $1', [req.params.id, JSON.stringify(data)]);
@@ -116,7 +127,7 @@ app.put('/api/prospects/:id', async (req, res) => {
   } catch (e) { console.error(e); res.status(500).json({ error: 'update_failed' }); }
 });
 
-app.delete('/api/prospects/:id', async (req, res) => {
+app.delete('/api/prospects/:id', auth, async (req, res) => {
   try {
     await pool.query('DELETE FROM prospects WHERE id = $1', [req.params.id]);
     res.json({ ok: true });
