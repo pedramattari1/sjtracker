@@ -4,6 +4,7 @@ import { useAuth } from "@clerk/clerk-react";
 import {
   createProspect,
   deleteProspect,
+  downloadProspectsCsv,
   fetchProspects,
   toInput,
   updateProspect,
@@ -141,6 +142,31 @@ export function Prospects() {
     await load();
   }
 
+  /** Build export params mirroring the current on-screen view (controls + deep-link). */
+  function exportParams(): URLSearchParams {
+    const p = new URLSearchParams();
+    if (controls.search) p.set("search", controls.search);
+    if (controls.status) p.set("status", controls.status);
+    if (controls.unitpref) p.set("unitpref", controls.unitpref);
+    if (controls.toured) p.set("toured", controls.toured);
+    if (controls.stage) p.set("stage", controls.stage);
+    const tile = searchParams.get("tile");
+    if (tile) p.set("tile", tile);
+    for (const k of ["status", "stage", "unitpref"] as const) {
+      const v = searchParams.get(k);
+      if (v && !p.has(k)) p.set(k, v);
+    }
+    return p;
+  }
+
+  async function handleExport() {
+    try {
+      await downloadProspectsCsv(token, exportParams());
+    } catch (e) {
+      window.alert(e instanceof Error ? e.message : "Export failed");
+    }
+  }
+
   const th = "border-b border-neutral-200 px-3 py-2.5 text-left";
   const thSort = cn(th, "cursor-pointer select-none hover:bg-neutral-100");
 
@@ -157,15 +183,23 @@ export function Prospects() {
                 : `${visible.length} of ${rows.length} prospects${syncedAt ? ` · synced ${syncedAt}` : ""}`}
           </p>
         </div>
-        <button
-          className="rounded-lg bg-neutral-900 px-3.5 py-2 text-sm font-medium text-white hover:bg-neutral-700"
-          onClick={() => {
-            setEditing(null);
-            setModalOpen(true);
-          }}
-        >
-          + Add prospect
-        </button>
+        <div className="flex gap-2">
+          <button
+            className="rounded-lg border border-neutral-300 px-3.5 py-2 text-sm font-medium hover:bg-neutral-50"
+            onClick={() => void handleExport()}
+          >
+            Export CSV
+          </button>
+          <button
+            className="rounded-lg bg-neutral-900 px-3.5 py-2 text-sm font-medium text-white hover:bg-neutral-700"
+            onClick={() => {
+              setEditing(null);
+              setModalOpen(true);
+            }}
+          >
+            + Add prospect
+          </button>
+        </div>
       </div>
 
       {/* Controls */}

@@ -93,6 +93,34 @@ buildable (empty) `/web` app on a new branch. **No code features, no DB changes,
        inline status <select>, add/edit/delete (delete confirms); Phase-2 deep-link
        banner still applies (AND-combined).
 
+## Phase 4 — CSV export (✅ DONE 2026-09-18)
+
+### Steps
+- [x] 1. `server/lib/csv.js`: standalone `buildCsv` (RFC-4180 escaping all fields,
+       header, CRLF, UTF-8 BOM).
+- [x] 2. `server/lib/prospectsFilter.js`: standalone `filterProspects` (view params).
+- [x] 3. `server.js`: `GET /api/prospects/export` (Clerk `auth`) reuses both.
+- [x] 4. `web`: `downloadProspectsCsv` + Export button sending current filter params.
+
+### Review
+**What changed:** two standalone, reusable server modules (`lib/csv.js`,
+`lib/prospectsFilter.js`); new Clerk-protected `GET /api/prospects/export` that
+reads rows, filters via the shared function, and streams a `text/csv` attachment;
+`downloadProspectsCsv` (token fetch → blob → download) and an Export button that
+serializes the current controls + deep-link into query params. Read-only; no
+schema/table changes.
+
+**How verified:**
+- typecheck / lint / build clean; `node --check server.js` OK.
+- **Escaping (shown):** a record with `O"Brien, Jr.` and notes containing a comma,
+  `""quotes""`, and two newlines → parsed back to exactly 11 header + 11 data
+  columns; notes round-trips byte-for-byte. BOM + CRLF present (Excel-clean).
+- **Filtered export == view:** filterProspects vs manual predicate vs CSV data-row
+  count all equal — all 60; warm∧1BR 12; tile=follow 28 (= Dashboard tile);
+  stage=Tour scheduled∧toured=scheduled 9; search "san" 11.
+
+**Next:** Phase 5 (scheduled email report) — NOT started.
+
 ## Review — Phase 3 (2026-09-18)
 **What changed:** `lib/constants.ts` (enum options/labels matching the current app);
 `lib/filters.ts` gained pure `applyControls` (AND-combined search/status/unit/

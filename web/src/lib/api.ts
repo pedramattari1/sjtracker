@@ -63,6 +63,30 @@ export async function deleteProspect(
   if (!res.ok) throw new Error(`DELETE /api/prospects/${id} failed: ${res.status}`);
 }
 
+/**
+ * Download a CSV of prospects honoring the given filter params. Fetches with the
+ * Clerk token (the route is protected), then triggers a browser download.
+ */
+export async function downloadProspectsCsv(
+  getToken: TokenGetter,
+  params: URLSearchParams,
+): Promise<void> {
+  const qs = params.toString();
+  const res = await fetch(`${BASE}/api/prospects/export${qs ? `?${qs}` : ""}`, {
+    headers: await authHeaders(getToken),
+  });
+  if (!res.ok) throw new Error(`export failed: ${res.status}`);
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `prospects-${new Date().toISOString().slice(0, 10)}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
 /** Build a full ProspectInput from a possibly-partial record (fills blanks). */
 export function toInput(r: Partial<Prospect>): ProspectInput {
   return {

@@ -5,6 +5,8 @@ const express = require('express');
 const cors = require('cors');
 const { Pool } = require('pg');
 const { clerkMiddleware, getAuth } = require('@clerk/express');
+const { buildCsv } = require('./lib/csv');
+const { filterProspects } = require('./lib/prospectsFilter');
 
 const app = express();
 app.use(cors());               // CORS so the Vercel frontend can call this
@@ -106,6 +108,19 @@ app.get('/api/prospects', auth, async (_req, res) => {
     const { rows } = await pool.query('SELECT id, ord, data FROM prospects ORDER BY ord ASC, id ASC');
     res.json(rows.map(rowToRecord));
   } catch (e) { console.error(e); res.status(500).json({ error: 'read_failed' }); }
+});
+
+// CSV export — honors the same filter query params as the Prospects view.
+app.get('/api/prospects/export', auth, async (req, res) => {
+  try {
+    const { rows } = await pool.query('SELECT id, ord, data FROM prospects ORDER BY ord ASC, id ASC');
+    const records = filterProspects(rows.map(rowToRecord), req.query);
+    const csv = buildCsv(records);
+    const date = new Date().toISOString().slice(0, 10);
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="prospects-${date}.csv"`);
+    res.send(csv);
+  } catch (e) { console.error(e); res.status(500).json({ error: 'export_failed' }); }
 });
 
 app.post('/api/prospects', auth, async (req, res) => {
