@@ -1,65 +1,52 @@
 # L.I.V.E. SJ — Prospect Tracker
 
-Shared, editable prospect tracker for the internal team. No sign-in.
+Internal prospect tracker for the City of San José subsidy program (The Fay).
+Clerk-gated dashboard app. npm workspaces monorepo:
 
-- **`server/`** — Express + Postgres API → deploy on **Railway**
-- **`public/`** — the tracker web page → deploy on **Vercel**
+- **`web/`** — React + Vite + TypeScript + Tailwind frontend → deploy on **Vercel** (root dir `web`)
+- **`server/`** — Express + Postgres API (Clerk-protected) → deploy on **Railway** (root dir `server`)
 
-Data lives in Postgres (on Railway). Everyone who opens the Vercel link can
-view and edit; the page polls the API every 5 seconds so edits sync.
-
----
-
-## Deploy — one time, ~10 minutes
-
-### 1. Push to GitHub
-Already done if you cloned/pushed this repo. Otherwise, from this folder:
-```bash
-git init && git add -A && git commit -m "Initial commit"
-gh repo create sj-tracker --private --source=. --push
-```
-
-### 2. Railway — API + database
-1. https://railway.app → **New Project** → **Deploy from GitHub repo** → pick `sj-tracker`.
-2. In the service **Settings → Root Directory**, set it to `server`.
-3. In the project, **+ New → Database → Add PostgreSQL**.
-4. Open your **service → Variables → + New Variable → Add Reference** and pick
-   `DATABASE_URL` from the Postgres service. (This wires the app to the DB.)
-5. Railway builds and starts it. Under **Settings → Networking**, click
-   **Generate Domain**. Copy that URL — e.g.
-   `https://sj-tracker-production.up.railway.app`.
-6. Visit that URL in a browser; you should see `{"ok":true,...}`. The table
-   auto-creates and seeds the starting prospects on first boot.
-
-> If the logs show an SSL connection error, add a variable
-> `DATABASE_SSL=true` to the service and redeploy.
-
-### 3. Point the frontend at the API
-In **`public/index.html`**, set the config line near the top of the script:
-```js
-var API_BASE = 'https://YOUR-RAILWAY-URL';   // no trailing slash
-```
-Commit and push.
-
-### 4. Vercel — the page
-1. https://vercel.com → **Add New → Project** → import `sj-tracker`.
-2. **Root Directory:** `public`. Framework preset: **Other**. No build command.
-3. **Deploy.** You get a link like `https://sj-tracker.vercel.app`.
-
-Send that Vercel link to the team. Done.
+Data lives in Postgres on Railway (`prospects` + `report_recipients` tables). The
+Prospects view polls the API every 5s so edits sync across the team.
 
 ---
 
-## Run locally (optional)
+## Deploy
+
+### Railway — API + database (root dir `server`)
+1. New Project → Deploy from GitHub repo → this repo; **Settings → Root Directory = `server`**.
+2. **+ New → Database → PostgreSQL**, then on the service add a Variable **Reference**
+   to `DATABASE_URL`.
+3. Set env vars: `CLERK_SECRET_KEY`, `CLERK_PUBLISHABLE_KEY`, and (for the report)
+   `RESEND_API_KEY`, `RESEND_FROM`, `CRON_SECRET`. See `server/.env.example`.
+4. **Settings → Networking → Generate Domain**. Visit it → `{"ok":true,...}`.
+   Tables auto-create; prospects seed on first boot.
+
+> If logs show an SSL error, set `DATABASE_SSL=true` and redeploy.
+
+### Vercel — frontend (root dir `web`)
+1. Import the repo; **Root Directory = `web`**.
+2. Env vars: `VITE_CLERK_PUBLISHABLE_KEY`, `VITE_API_BASE_URL` (the Railway URL).
+   See `web/.env.example`.
+3. Deploy → share the Vercel link with the team.
+
+### Scheduled city report
+`.github/workflows/city-report.yml` POSTs to `/api/reports/city-export` weekly
+(Mondays 15:00 UTC) and on manual dispatch. Add repo secrets `API_BASE_URL` and
+`CRON_SECRET`. Recipients are managed in-app on the Reports page.
+
+---
+
+## Run locally
 ```bash
-cd server
-npm install
-DATABASE_URL=postgres://... npm start   # needs a Postgres to point at
+npm install                 # root, installs both workspaces
+npm run dev -w server       # API (needs DATABASE_URL + Clerk keys in env)
+npm run dev -w web          # frontend (VITE_* in web/.env.local)
 ```
-Then open `public/index.html` with `API_BASE` set to `http://localhost:3000`.
+Checks: `npm run typecheck -w web`, `npm run lint -w web`, `npm run build -w web`.
 
 ## Notes
-- **No auth by design** — anyone with the link and the API URL can edit. Keep
-  the links internal. A shared password gate can be added later if needed.
-- To change the seeded starting data, edit the `SEED` array in
-  `server/server.js` (only used when the table is empty).
+- Access is Clerk-gated; restrict sign-ups to team emails in the Clerk dashboard.
+- The `prospects` table is production data — schema changes are additive only.
+- To change seeded starting data, edit the `SEED` array in `server/server.js`
+  (only used when the table is empty).
