@@ -7,6 +7,7 @@ const { Pool } = require('pg');
 const { clerkMiddleware, getAuth } = require('@clerk/express');
 const { buildCsv } = require('./lib/csv');
 const { filterProspects } = require('./lib/prospectsFilter');
+const { buildReportPayload } = require('./lib/report');
 
 const app = express();
 app.use(cors());               // CORS so the Vercel frontend can call this
@@ -108,6 +109,43 @@ app.get('/api/prospects', auth, async (_req, res) => {
     const { rows } = await pool.query('SELECT id, ord, data FROM prospects ORDER BY ord ASC, id ASC');
     res.json(rows.map(rowToRecord));
   } catch (e) { console.error(e); res.status(500).json({ error: 'read_failed' }); }
+});
+
+// Scheduled city report — machine-triggered (GitHub Actions), guarded by
+// CRON_SECRET via the x-cron-secret header (NOT Clerk). Builds the CSV via the
+// Phase 4 units and emails it as an attachment via Resend. Resend is a no-op when
+// RESEND_API_KEY is unset, so local runs don't crash.
+app.post('/api/reports/city-export', async (req, res) => {
+  const secret = process.env.CRON_SECRET;
+  const provided = req.get('x-cron-secret');
+  if (!secret) return res.status(500).json({ error: 'cron_secret_not_configured' });
+  if (!provided || provided !== secret) return res.status(401).json({ error: 'unauthorized' });
+  try {
+    const { rows } = await pool.query('SELECT id, ord, data FROM prospects ORDER BY ord ASC, id ASC');
+    const records = rows.map(rowToRecord);
+    const recipients = (process.env.CITY_REPORT_RECIPIENTS || '')
+      .split(',').map((s) => s.trim()).filter(Boolean);
+    const from = process.env.RESEND_FROM || 'L.I.V.E. SJ Reports <reports@wimmops.com>';
+    const payload = buildReportPayload({ records, from, recipients, query: req.query });
+    const count = payload._count;
+
+    if (!process.env.RESEND_API_KEY) {
+      return res.json({ ok: true, emailed: false, reason: 'RESEND_API_KEY not set', prospects: count, recipients: recipients.length });
+    }
+    if (recipients.length === 0) {
+      return res.json({ ok: true, emailed: false, reason: 'no recipients configured', prospects: count });
+    }
+    const { Resend } = require('resend');
+    const resend = new Resend(process.env.RESEND_API_KEY);
+    const { _count, ...email } = payload;
+    void _count;
+    const result = await resend.emails.send(email);
+    if (result && result.error) {
+      console.error('Resend error:', result.error);
+      return res.status(502).json({ ok: false, error: 'email_send_failed' });
+    }
+    return res.json({ ok: true, emailed: true, prospects: count, recipients: recipients.length });
+  } catch (e) { console.error(e); res.status(500).json({ error: 'report_failed' }); }
 });
 
 // CSV export — honors the same filter query params as the Prospects view.

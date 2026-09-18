@@ -1,0 +1,38 @@
+name: Weekly city prospect report
+
+# Emails the current prospect CSV to the city recipient list.
+#
+# NOTE: GitHub Actions cron is always UTC. Monday 08:00 America/Los_Angeles is
+# roughly `0 16 * * 1` (16:00 UTC). PT is UTC-7 (PDT) or UTC-8 (PST), so the local
+# send time drifts by 1 hour across daylight-saving changes — acceptable for a
+# weekly report.
+#
+# NOTE: GitHub disables scheduled workflows after 60 days of no repo activity.
+# Any commit re-arms it; you can also trigger it manually below.
+
+on:
+  schedule:
+    - cron: "0 16 * * 1" # Mondays 16:00 UTC ≈ 08:00 PT
+  workflow_dispatch: {}
+
+jobs:
+  send-report:
+    runs-on: ubuntu-latest
+    steps:
+      - name: POST to city-export endpoint
+        run: |
+          set -euo pipefail
+          code=$(curl -sS -o /tmp/out.json -w "%{http_code}" \
+            -X POST "${API_BASE_URL}/api/reports/city-export" \
+            -H "x-cron-secret: ${CRON_SECRET}")
+          echo "HTTP $code"
+          cat /tmp/out.json || true
+          echo
+          # Fail the job on any non-2xx so a broken report is visible.
+          if [ "$code" -lt 200 ] || [ "$code" -ge 300 ]; then
+            echo "city-export failed with HTTP $code"
+            exit 1
+          fi
+        env:
+          API_BASE_URL: ${{ secrets.API_BASE_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}

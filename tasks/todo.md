@@ -119,7 +119,45 @@ schema/table changes.
   count all equal — all 60; warm∧1BR 12; tile=follow 28 (= Dashboard tile);
   stage=Tour scheduled∧toured=scheduled 9; search "san" 11.
 
-**Next:** Phase 5 (scheduled email report) — NOT started.
+**Next:** Phase 5 (scheduled email report).
+
+## Phase 5 — Scheduled email report (✅ DONE 2026-09-18)
+
+### Steps
+- [x] 1. `server/lib/report.js`: `buildReportPayload` reuses Phase 4 units.
+- [x] 2. `server.js`: `POST /api/reports/city-export` — `x-cron-secret` guard,
+       Resend no-op when key absent.
+- [x] 3. `.github/workflows/city-report.yml`: weekly Mon + dispatch; UTC/DST + 60d notes.
+- [x] 4. `web`: read-only Reports section (recipients + cadence).
+
+### Review
+**What changed:** `server/lib/report.js` (`buildReportPayload` — pure, reuses
+`filterProspects`+`buildCsv`, base64 CSV attachment); `POST /api/reports/city-export`
+guarded by `x-cron-secret` (== `CRON_SECRET`), NOT Clerk — builds the report and
+sends via Resend, no-op when `RESEND_API_KEY` unset; GitHub Actions workflow
+(weekly Mon 16:00 UTC ≈ 08:00 PT + `workflow_dispatch`, fails job on non-2xx);
+read-only Reports view (cadence + recipients, recipients optional via
+`VITE_CITY_REPORT_RECIPIENTS`). Added `resend` dep. Read-only on data.
+
+**How verified:**
+- typecheck / lint / build clean; `node --check server.js` OK.
+- **Payload builder:** to==recipients, from correct, subject dated, filename
+  `sj-prospects-<date>.csv`, attachment decodes to the exact Phase-4 CSV (BOM + 60
+  data rows); filter honored (status=warm → 17).
+- **Guard (curl):** no header → **401**; wrong header → **401**; correct header,
+  no `RESEND_API_KEY` → **200** `{emailed:false,"RESEND_API_KEY not set",prospects:33}`
+  (no crash — Resend no-op).
+- **Send path:** correct secret + a bogus `RESEND_API_KEY` + recipient → code calls
+  Resend, which rejects (`401 API key is invalid`) → endpoint returns **502
+  email_send_failed**, proving it reaches `resend.emails.send` (not the no-op branch).
+
+**Left to Pedram (deferred, like the valid-token check):**
+- Set `RESEND_API_KEY`, `RESEND_FROM`, `CITY_REPORT_RECIPIENTS`, `CRON_SECRET` in
+  the Railway service; confirm `wimmops.com` verified in Resend.
+- Add GitHub repo secrets `API_BASE_URL` + `CRON_SECRET` (same value as Railway).
+- Run the workflow via **workflow_dispatch** to confirm real delivery to an inbox.
+
+**Next:** Phase 6 (optional extras) — NOT started.
 
 ## Review — Phase 3 (2026-09-18)
 **What changed:** `lib/constants.ts` (enum options/labels matching the current app);
