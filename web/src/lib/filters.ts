@@ -58,6 +58,72 @@ export const TILES: {
 
 const TILE_BY_KEY = new Map(TILES.map((t) => [t.key, t]));
 
+// ---- Phase 3: combinable filter controls (pure, testable) ----
+export interface Controls {
+  search: string; // matches name or email (case-insensitive)
+  status: string; // "" = all
+  unitpref: string; // "" = all (matches "Not indicated" when set to "__none__")
+  toured: string; // "" = all
+  stage: string; // "" = all
+}
+
+export const EMPTY_CONTROLS: Controls = {
+  search: "",
+  status: "",
+  unitpref: "",
+  toured: "",
+  stage: "",
+};
+
+/** Apply all active controls with AND semantics. */
+export function applyControls(rows: Prospect[], c: Controls): Prospect[] {
+  const q = c.search.trim().toLowerCase();
+  return rows.filter((r) => {
+    if (c.status && r.status !== c.status) return false;
+    if (c.toured && r.toured !== c.toured) return false;
+    if (c.stage && r.stage !== c.stage) return false;
+    if (c.unitpref) {
+      if (c.unitpref === UNIT_NONE ? r.unitpref !== "" : r.unitpref !== c.unitpref)
+        return false;
+    }
+    if (q) {
+      const hay = `${r.fname} ${r.lname} ${r.email}`.toLowerCase();
+      if (!hay.includes(q)) return false;
+    }
+    return true;
+  });
+}
+
+export type SortCol = "name" | "referred" | "status" | "stage";
+
+/** Stable-ish sort by a column; returns a new array. */
+export function sortRows(
+  rows: Prospect[],
+  col: SortCol,
+  dir: 1 | -1,
+): Prospect[] {
+  return rows.slice().sort((a, b) => {
+    let av = "";
+    let bv = "";
+    if (col === "name") {
+      av = `${a.lname}${a.fname}`.toLowerCase();
+      bv = `${b.lname}${b.fname}`.toLowerCase();
+    } else if (col === "referred") {
+      av = a.referred || "";
+      bv = b.referred || "";
+    } else if (col === "status") {
+      av = a.status;
+      bv = b.status;
+    } else {
+      av = a.stage;
+      bv = b.stage;
+    }
+    if (av < bv) return -1 * dir;
+    if (av > bv) return 1 * dir;
+    return 0;
+  });
+}
+
 /** Resolve a Prospects filter from URL params. Returns predicate + label, or
  *  null when there is no active filter. Single-filter only (Phase 2 deep-links);
  *  the full combinable filter UI is Phase 3. */

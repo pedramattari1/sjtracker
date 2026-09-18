@@ -82,6 +82,47 @@ buildable (empty) `/web` app on a new branch. **No code features, no DB changes,
        URL-driven filter with a "Filtered: … / Clear" banner.
 - [x] Dashboard is now the landing route (`/` → `/dashboard`).
 
+## Phase 3 — Prospects view: filters, search, inline edit, CRUD (✅ DONE 2026-09-18)
+
+### Steps
+- [x] 1. `lib/constants.ts`: status/toured/unit/stage/responded options + labels.
+- [x] 2. `lib/filters.ts`: pure `applyControls` (AND-combined) + `sortRows`.
+- [x] 3. `api.ts`: create/update/delete (update sends FULL record) + `toInput`.
+- [x] 4. `ProspectModal`: add/edit with all 11 current-app fields.
+- [x] 5. Prospects: sortable columns, combinable filters + search, result count,
+       inline status <select>, add/edit/delete (delete confirms); Phase-2 deep-link
+       banner still applies (AND-combined).
+
+## Review — Phase 3 (2026-09-18)
+**What changed:** `lib/constants.ts` (enum options/labels matching the current app);
+`lib/filters.ts` gained pure `applyControls` (AND-combined search/status/unit/
+toured/stage) + `sortRows`; `api.ts` gained `createProspect`/`updateProspect`/
+`deleteProspect` + `toInput` (update sends the COMPLETE record because the server
+PUT is a full-replace); `ProspectModal` (add/edit, all 11 fields); `Prospects.tsx`
+rewritten — sortable headers, combinable filter dropdowns + free-text search,
+live result count, inline status `<select>`, add/edit/delete with delete
+confirmation, Phase-2 deep-link banner still applied (AND-combined). All writes go
+through the Clerk-protected API. No `/server`/schema/table changes.
+
+**How verified:**
+- typecheck clean; lint clean (0 warnings); build clean (`✓ 1641 modules`).
+- **Filters combine (AND) — verified vs live data:**
+  warm ∧ 1 Bedroom = 12 (= manual); follow ∧ toured=no = 14; warm ∧
+  toured=scheduled ∧ search"san" = 2; stage "Tour scheduled" ∧ 2 Bedroom = 1.
+  All equal the manual intersection.
+- **CRUD round-trip + field integrity (real DB, net-zero temp row):**
+  count 60 → POST temp row → 61 → PUT changing ONLY status (new→warm) → read-back
+  shows status=warm and **all 10 other fields byte-for-byte intact** → DELETE →
+  count back to 60. No existing row touched.
+- **No field missing:** modal + table cover fname,lname,email,phone,referred,
+  responded,status,unitpref,toured,stage,notes (all 11 from the old app).
+
+**Note on the integrity guarantee:** the server PUT replaces `data` wholesale, so
+`updateProspect` (and inline status edit) always send the full record via `toInput`
+— that is what keeps untouched fields from being blanked.
+
+**Next:** Phase 4 (CSV export) — NOT started.
+
 ## Review — Phase 2 (2026-09-18)
 **What changed:** new `lib/filters.ts` (tile predicates matching the current app,
 `STAGE_ORDER`, `APPLYING_STAGES`, `UNIT_ORDER`, `resolveFilter`). `Dashboard.tsx`

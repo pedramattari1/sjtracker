@@ -15,3 +15,6 @@ export interface Prospect {
   stage: string; // leasing stage label
   notes: string;
 }
+
+/** The writable fields (everything except the server-managed id/order). */
+export type ProspectInput = Omit<Prospect, "_id" | "order">;
