@@ -159,6 +159,25 @@ read-only Reports view (cadence + recipients, recipients optional via
 
 **Next:** Phase 5.5 (in-app recipient management).
 
+## Phase 7 — Prospects list modernization (✅ DONE 2026-09-24)
+- [x] 1. `lib/badges.ts`: centralized label + color maps + pill classes for
+       status/toured/stage; `lib/prospectSync.ts`: `syncTouredForStage`.
+- [x] 2. Notes clamped to 2 lines (uniform rows); row click opens a right-side
+       slide-over drawer with every field editable + full notes. Drawer replaces
+       the modal as primary edit surface (ProspectModal removed).
+- [x] 3. Inline colored-pill dropdowns for Status (existing), Toured, and Leasing
+       stage (funnel-ordered) — all one-click editable in the row.
+- [x] 4. Auto-sync Toured↔Stage (Tour completed→Yes, Tour scheduled→Scheduled),
+       not overwriting a value set manually in the same edit.
+- [x] 5. Row actions collapsed into a "⋯" menu (Edit→drawer, Delete confirm-gated).
+- [x] 6. Polish: zebra + hover, sticky header, column widths, consistent pills,
+       fixed header labels.
+
+### Rules: UI/additive only; whole-object PUT; keep filters/search/sort/export/
+deep-link banner + 5s sync. DoD: typecheck+lint+build clean; inline changes persist
+in place (no reload); drawer edits don't blank fields; notes clamp uniform; filters
+/search/sort/export still work.
+
 ## Phase 5.5 — In-app recipient management (✅ DONE 2026-09-18)
 
 ### Steps
