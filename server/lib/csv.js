@@ -2,6 +2,11 @@
 // city report (Phase 5). RFC 4180: fields containing " , CR or LF are wrapped in
 // double quotes with internal quotes doubled. CRLF line endings + a UTF-8 BOM so
 // Excel opens accented text (San José) cleanly.
+//
+// Phase 8: a titled/dated summary block (headline stats, unit-preference counts,
+// leasing-stage counts) is prepended above the full prospect table.
+
+const { buildSummary } = require('./summary');
 
 // Human-readable header -> record key. Order is the column order.
 const COLUMNS = [
@@ -26,13 +31,33 @@ function escapeField(value) {
   return s;
 }
 
-/** Build a CSV string from an array of prospect records. */
-function buildCsv(records) {
-  const header = COLUMNS.map((c) => escapeField(c[0])).join(',');
-  const lines = records.map((r) =>
-    COLUMNS.map((c) => escapeField(r[c[1]])).join(','),
-  );
-  return '﻿' + [header, ...lines].join('\r\n') + '\r\n';
+function row(cells) {
+  return cells.map(escapeField).join(',');
+}
+
+/** Build a CSV string: summary block on top, blank line, then the prospect table. */
+function buildCsv(records, opts = {}) {
+  const date = opts.date || new Date().toISOString().slice(0, 10);
+  const s = buildSummary(records);
+
+  const lines = [
+    row([`L.I.V.E. SJ — Prospect Summary (${date})`]),
+    '',
+    row(['Metric', 'Count']),
+    ...s.headline.map((h) => row([h.label, h.value])),
+    '',
+    row(['Unit preference', 'Count']),
+    ...s.units.map((u) => row([u.label, u.value])),
+    '',
+    row(['Leasing stage', 'Count']),
+    ...s.stages.map((st) => row([st.label, st.value])),
+    '',
+    // full prospect table
+    row(COLUMNS.map((c) => c[0])),
+    ...records.map((r) => row(COLUMNS.map((c) => r[c[1]]))),
+  ];
+
+  return '﻿' + lines.join('\r\n') + '\r\n';
 }
 
 module.exports = { buildCsv, escapeField, COLUMNS };

@@ -3,12 +3,8 @@ import { Link } from "react-router-dom";
 import { useAuth } from "@clerk/clerk-react";
 import { fetchProspects } from "@/lib/api";
 import type { Prospect } from "@/lib/types";
-import {
-  STAGE_ORDER,
-  TILES,
-  UNIT_NONE,
-  UNIT_ORDER,
-} from "@/lib/filters";
+import { UNIT_NONE } from "@/lib/filters";
+import { buildSummary } from "@/lib/summary";
 
 const TILE_LINK: Record<string, string> = {
   total: "/prospects",
@@ -17,6 +13,11 @@ const TILE_LINK: Record<string, string> = {
   follow: "/prospects?tile=follow",
   applying: "/prospects?tile=applying",
 };
+
+function unitHref(label: string): string {
+  if (label === "Not indicated") return `/prospects?unitpref=${UNIT_NONE}`;
+  return `/prospects?unitpref=${encodeURIComponent(label)}`;
+}
 
 export function Dashboard() {
   const { getToken } = useAuth();
@@ -39,31 +40,11 @@ export function Dashboard() {
     void load();
   }, [load]);
 
-  if (loading) {
-    return <p className="text-sm text-neutral-500">Loading…</p>;
-  }
-  if (error) {
-    return <p className="text-sm text-red-600">Error: {error}</p>;
-  }
+  if (loading) return <p className="text-sm text-neutral-500">Loading…</p>;
+  if (error) return <p className="text-sm text-red-600">Error: {error}</p>;
 
-  const unitCounts = UNIT_ORDER.map((u) => ({
-    label: u,
-    href: `/prospects?unitpref=${encodeURIComponent(u)}`,
-    count: rows.filter((r) => r.unitpref === u).length,
-  }));
-  const notIndicated = rows.filter((r) => !r.unitpref).length;
-  unitCounts.push({
-    label: "Not indicated",
-    href: `/prospects?unitpref=${UNIT_NONE}`,
-    count: notIndicated,
-  });
-
-  const stageCounts = STAGE_ORDER.map((s) => ({
-    label: s,
-    href: `/prospects?stage=${encodeURIComponent(s)}`,
-    count: rows.filter((r) => r.stage === s).length,
-  }));
-  const stageMax = Math.max(1, ...stageCounts.map((s) => s.count));
+  const summary = buildSummary(rows);
+  const stageMax = Math.max(1, ...summary.stages.map((s) => s.value));
 
   return (
     <div className="space-y-8">
@@ -74,15 +55,13 @@ export function Dashboard() {
 
       {/* Status tiles */}
       <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
-        {TILES.map((t) => (
+        {summary.headline.map((t) => (
           <Link
             key={t.key}
-            to={TILE_LINK[t.key]}
+            to={TILE_LINK[t.key] ?? "/prospects"}
             className="rounded-xl border border-neutral-200 bg-white p-4 text-center transition-colors hover:border-neutral-300 hover:bg-neutral-50"
           >
-            <div className="text-2xl font-semibold">
-              {rows.filter(t.predicate).length}
-            </div>
+            <div className="text-2xl font-semibold">{t.value}</div>
             <div className="mt-1 text-xs text-neutral-500">{t.label}</div>
           </Link>
         ))}
@@ -93,14 +72,14 @@ export function Dashboard() {
         <section className="rounded-xl border border-neutral-200 bg-white p-5">
           <h2 className="mb-4 text-sm font-semibold">Unit preference</h2>
           <ul className="space-y-2">
-            {unitCounts.map((u) => (
+            {summary.units.map((u) => (
               <li key={u.label}>
                 <Link
-                  to={u.href}
+                  to={unitHref(u.label)}
                   className="flex items-center justify-between rounded-md px-2 py-1.5 text-sm hover:bg-neutral-50"
                 >
                   <span className="text-neutral-700">{u.label}</span>
-                  <span className="font-semibold tabular-nums">{u.count}</span>
+                  <span className="font-semibold tabular-nums">{u.value}</span>
                 </Link>
               </li>
             ))}
@@ -111,17 +90,20 @@ export function Dashboard() {
         <section className="rounded-xl border border-neutral-200 bg-white p-5">
           <h2 className="mb-4 text-sm font-semibold">Leasing stage</h2>
           <ul className="space-y-2">
-            {stageCounts.map((s) => (
+            {summary.stages.map((s) => (
               <li key={s.label}>
-                <Link to={s.href} className="block rounded-md p-1.5 hover:bg-neutral-50">
+                <Link
+                  to={`/prospects?stage=${encodeURIComponent(s.label)}`}
+                  className="block rounded-md p-1.5 hover:bg-neutral-50"
+                >
                   <div className="mb-1 flex items-center justify-between text-xs">
                     <span className="text-neutral-700">{s.label}</span>
-                    <span className="font-semibold tabular-nums">{s.count}</span>
+                    <span className="font-semibold tabular-nums">{s.value}</span>
                   </div>
                   <div className="h-2 w-full overflow-hidden rounded-full bg-neutral-100">
                     <div
                       className="h-full rounded-full bg-neutral-800"
-                      style={{ width: `${(s.count / stageMax) * 100}%` }}
+                      style={{ width: `${(s.value / stageMax) * 100}%` }}
                     />
                   </div>
                 </Link>

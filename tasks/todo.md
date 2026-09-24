@@ -159,6 +159,21 @@ read-only Reports view (cadence + recipients, recipients optional via
 
 **Next:** Phase 5.5 (in-app recipient management).
 
+## Phase 8 — Summary overview in report CSV + email (✅ DONE 2026-09-24)
+- [x] 1. `buildSummary(records)` → 5 headline stats + unit-pref counts + stage counts.
+       Canonical logic; dashboard, CSV, and email all consume it. (Server JS +
+       web TS mirror; parity locked by a test since they can't share one module
+       across the two deploy roots.)
+- [x] 2. CSV (`buildCsv`, used by Export + emailed attachment): titled+dated header,
+       headline stats block, unit block, stage block (blank-line separated), then
+       the full prospect table below. All cells CSV-escaped.
+- [x] 3. Email body: same summary as clean HTML above the existing text.
+- [x] 4. Dashboard refactored to consume `buildSummary` (numbers unchanged).
+
+### DoD: typecheck+lint+build clean; CSV opens in Excel with summary on top + all
+rows below; email shows summary in body AND attaches CSV; counts match dashboard
+tile-for-tile; escaping still holds.
+
 ## Phase 7 — Prospects list modernization (✅ DONE 2026-09-24)
 - [x] 1. `lib/badges.ts`: centralized label + color maps + pill classes for
        status/toured/stage; `lib/prospectSync.ts`: `syncTouredForStage`.
