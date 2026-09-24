@@ -199,6 +199,7 @@ export function ProspectModal({ open, initial, onClose, onSave }: Props) {
 
         <div className="mt-5 flex justify-end gap-2">
           <button
+            type="button"
             className="rounded-lg border border-neutral-300 px-3.5 py-2 text-sm hover:bg-neutral-50"
             onClick={onClose}
             disabled={saving}
@@ -206,6 +207,7 @@ export function ProspectModal({ open, initial, onClose, onSave }: Props) {
             Cancel
           </button>
           <button
+            type="button"
             className="rounded-lg bg-neutral-900 px-3.5 py-2 text-sm font-medium text-white hover:bg-neutral-700 disabled:opacity-50"
             onClick={handleSave}
             disabled={saving}
