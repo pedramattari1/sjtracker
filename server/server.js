@@ -222,3 +222,5 @@ const PORT = process.env.PORT || 3000;
 initDb()
   .then(() => app.listen(PORT, () => console.log('API listening on ' + PORT)))
   .catch(err => { console.error('DB init failed:', err); process.exit(1); });
+
+// deploy check: auto-deploy verification 2026-10-13
