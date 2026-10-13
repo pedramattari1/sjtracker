@@ -159,6 +159,25 @@ read-only Reports view (cadence + recipients, recipients optional via
 
 **Next:** Phase 5.5 (in-app recipient management).
 
+## Phase 9 — Reliable 8 AM Monday delivery (✅ code done; staged)
+- [x] 1. `report_runs` table (additive) keyed by ISO week; atomic `tryClaimWeek`
+       (ON CONFLICT) so the report sends at most once/week across all triggers;
+       retry allowed only after a failed/stale attempt. `force=1` bypass.
+- [x] 2. In-process `node-cron` scheduler: Mon 08:00 `America/Los_Angeles` (DST-correct).
+- [x] 3. Catch-up on boot + hourly self-check: if past Mon 08:00 PT this week and no
+       success recorded, send (covers a restart/outage at 08:00).
+- [x] 4. Refactor `city-export` + scheduler through one guarded `runCityReport()`.
+- [x] 5. Healthcheck ping (HEALTHCHECK_URL, optional) on success; admin failure
+       email (ADMIN_ALERT_EMAIL, optional). Both no-op when env unset.
+- [x] 6. GitHub Actions cron → `7 15 * * 1` (off top of hour) as tertiary backup
+       (idempotent, no force).
+- [ ] USER: cron-job.org job (POST endpoint, Mon 08:00 PT, x-cron-secret) +
+       healthchecks.io monitor → give me the ping URL for HEALTHCHECK_URL env.
+
+### Rules: additive table only; no prospects schema change. DoD: typecheck+lint+
+build clean; idempotency proven (2nd trigger same week no-ops); catch-up logic
+tested; scheduler registers; CSV/email summary unchanged.
+
 ## Phase 8 — Summary overview in report CSV + email (✅ DONE 2026-09-24)
 - [x] 1. `buildSummary(records)` → 5 headline stats + unit-pref counts + stage counts.
        Canonical logic; dashboard, CSV, and email all consume it. (Server JS +

@@ -9,6 +9,8 @@ const { buildCsv } = require('./lib/csv');
 const { filterProspects } = require('./lib/prospectsFilter');
 const { buildReportPayload } = require('./lib/report');
 const recipientsDb = require('./lib/recipients');
+const reportRuns = require('./lib/reportRuns');
+const cron = require('node-cron');
 
 const app = express();
 app.use(cors());               // CORS so the Vercel frontend can call this
@@ -101,6 +103,96 @@ async function initDb() {
     console.log('Seeded ' + SEED.length + ' prospects.');
   }
   await recipientsDb.ensureTable(pool); // additive; does not touch prospects
+  await reportRuns.ensureTable(pool);   // additive; idempotency ledger
+}
+
+// ---- Weekly report: one guarded path for all triggers ----
+
+async function pingHealthcheck() {
+  if (!process.env.HEALTHCHECK_URL) return;
+  try { await fetch(process.env.HEALTHCHECK_URL, { method: 'GET' }); }
+  catch (e) { console.error('healthcheck ping failed:', e.message); }
+}
+
+async function adminAlert(subject, body) {
+  if (!process.env.ADMIN_ALERT_EMAIL || !process.env.RESEND_API_KEY) return;
+  try {
+    const { Resend } = require('resend');
+    const resend = new Resend(process.env.RESEND_API_KEY);
+    await resend.emails.send({
+      from: process.env.RESEND_FROM || 'L.I.V.E. SJ Reports <reports@wimmops.com>',
+      to: [process.env.ADMIN_ALERT_EMAIL],
+      subject,
+      text: body,
+    });
+  } catch (e) { console.error('admin alert failed:', e.message); }
+}
+
+/**
+ * Build + send the weekly city report, idempotent per ISO week. Safe to call from
+ * any trigger; at most one send per week (unless force). Returns a plain result.
+ */
+async function runCityReport({ force = false, trigger = 'manual' } = {}) {
+  const recipients = (await recipientsDb.listRecipients(pool)).map((r) => r.email).filter(Boolean);
+  if (recipients.length === 0) {
+    return { ok: true, emailed: false, reason: 'no recipients', trigger };
+  }
+  if (!process.env.RESEND_API_KEY) {
+    return { ok: true, emailed: false, reason: 'RESEND_API_KEY not set', trigger };
+  }
+
+  const week = reportRuns.currentWeekKey();
+  const claimed = await reportRuns.tryClaimWeek(pool, week, force);
+  if (!claimed) {
+    const existing = await reportRuns.getWeek(pool, week);
+    return { ok: true, emailed: false, skipped: true, reason: 'already sent this week', week, status: existing && existing.status, trigger };
+  }
+
+  try {
+    const { rows } = await pool.query('SELECT id, ord, data FROM prospects ORDER BY ord ASC, id ASC');
+    const records = rows.map(rowToRecord);
+    const from = process.env.RESEND_FROM || 'L.I.V.E. SJ Reports <reports@wimmops.com>';
+    const payload = buildReportPayload({ records, from, recipients });
+    const count = payload._count;
+
+    const { Resend } = require('resend');
+    const resend = new Resend(process.env.RESEND_API_KEY);
+    const { _count, ...email } = payload;
+    void _count;
+    const result = await resend.emails.send(email);
+    if (result && result.error) throw new Error(JSON.stringify(result.error));
+
+    await reportRuns.markSuccess(pool, week, { recipients: recipients.length, prospects: count });
+    await pingHealthcheck();
+    console.log(`[report] sent week=${week} trigger=${trigger} prospects=${count} recipients=${recipients.length}`);
+    return { ok: true, emailed: true, week, prospects: count, recipients: recipients.length, trigger };
+  } catch (e) {
+    console.error('[report] failed:', e.message);
+    await reportRuns.markFailed(pool, week, e.message);
+    await adminAlert('L.I.V.E. SJ report FAILED', `Week ${week} (${trigger}) failed: ${e.message}`);
+    return { ok: false, error: 'email_send_failed', week, trigger };
+  }
+}
+
+// In-process scheduler (primary) + catch-up (resilience).
+function startScheduler() {
+  const expr = process.env.REPORT_CRON || '0 8 * * 1'; // Mondays 08:00 local
+  cron.schedule(expr, () => { void runCityReport({ trigger: 'cron' }); }, { timezone: reportRuns.REPORT_TZ });
+  console.log(`[scheduler] weekly report at "${expr}" ${reportRuns.REPORT_TZ}`);
+
+  async function maybeCatchup() {
+    try {
+      const parts = reportRuns.tzParts();
+      if (!reportRuns.isPastWeeklySend(parts)) return; // before Mon 08:00 — wait for cron
+      const week = reportRuns.currentWeekKey();
+      const existing = await reportRuns.getWeek(pool, week);
+      if (existing && existing.status === 'success') return; // already sent
+      const r = await runCityReport({ trigger: 'catchup' });
+      if (r.emailed) console.log('[scheduler] catch-up sent', week);
+    } catch (e) { console.error('[scheduler] catch-up error:', e.message); }
+  }
+  setTimeout(() => { void maybeCatchup(); }, 15000);      // shortly after boot
+  setInterval(() => { void maybeCatchup(); }, 3600 * 1000); // hourly
 }
 
 // --- Routes ---
@@ -123,33 +215,8 @@ app.post('/api/reports/city-export', async (req, res) => {
   if (!secret) return res.status(500).json({ error: 'cron_secret_not_configured' });
   if (!provided || provided !== secret) return res.status(401).json({ error: 'unauthorized' });
   try {
-    const { rows } = await pool.query('SELECT id, ord, data FROM prospects ORDER BY ord ASC, id ASC');
-    const records = rows.map(rowToRecord);
-    // Recipients are managed in-app (report_recipients table), not env.
-    const recipients = (await recipientsDb.listRecipients(pool))
-      .map((r) => r.email).filter(Boolean);
-    const from = process.env.RESEND_FROM || 'L.I.V.E. SJ Reports <reports@wimmops.com>';
-
-    // Empty list -> clean no-op regardless of RESEND config.
-    if (recipients.length === 0) {
-      return res.json({ ok: true, emailed: false, reason: 'no recipients', prospects: records.length });
-    }
-    const payload = buildReportPayload({ records, from, recipients, query: req.query });
-    const count = payload._count;
-
-    if (!process.env.RESEND_API_KEY) {
-      return res.json({ ok: true, emailed: false, reason: 'RESEND_API_KEY not set', prospects: count, recipients: recipients.length });
-    }
-    const { Resend } = require('resend');
-    const resend = new Resend(process.env.RESEND_API_KEY);
-    const { _count, ...email } = payload;
-    void _count;
-    const result = await resend.emails.send(email);
-    if (result && result.error) {
-      console.error('Resend error:', result.error);
-      return res.status(502).json({ ok: false, error: 'email_send_failed' });
-    }
-    return res.json({ ok: true, emailed: true, prospects: count, recipients: recipients.length });
+    const result = await runCityReport({ force: req.query.force === '1', trigger: 'http' });
+    return res.status(result.error ? 502 : 200).json(result);
   } catch (e) { console.error(e); res.status(500).json({ error: 'report_failed' }); }
 });
 
@@ -220,7 +287,8 @@ app.delete('/api/prospects/:id', auth, async (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 initDb()
-  .then(() => app.listen(PORT, () => console.log('API listening on ' + PORT)))
+  .then(() => {
+    app.listen(PORT, () => console.log('API listening on ' + PORT));
+    startScheduler();
+  })
   .catch(err => { console.error('DB init failed:', err); process.exit(1); });
-
-// deploy check: auto-deploy verification 2026-10-13
