@@ -177,8 +177,18 @@ async function runCityReport({ force = false, trigger = 'manual' } = {}) {
 // In-process scheduler (primary) + catch-up (resilience).
 function startScheduler() {
   const expr = process.env.REPORT_CRON || '0 8 * * 1'; // Mondays 08:00 local
-  cron.schedule(expr, () => { void runCityReport({ trigger: 'cron' }); }, { timezone: reportRuns.REPORT_TZ });
-  console.log(`[scheduler] weekly report at "${expr}" ${reportRuns.REPORT_TZ}`);
+  cron.schedule(expr, () => {
+    // REPORT_FORCE=1 is a temporary test aid so a scheduled fire can re-send
+    // within an already-sent week; unset in normal operation.
+    const force = process.env.REPORT_FORCE === '1';
+    void runCityReport({ trigger: 'cron', force });
+  }, { timezone: reportRuns.REPORT_TZ });
+  console.log(`[scheduler] weekly report at "${expr}" ${reportRuns.REPORT_TZ}${process.env.REPORT_FORCE === '1' ? ' (FORCE)' : ''}`);
+
+  if (process.env.REPORT_CATCHUP === 'off') {
+    console.log('[scheduler] catch-up disabled (REPORT_CATCHUP=off)');
+    return;
+  }
 
   async function maybeCatchup() {
     try {
