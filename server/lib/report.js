@@ -68,8 +68,8 @@ function summaryHtml(summary, day, count) {
     `<table role="presentation" width="600" cellpadding="0" cellspacing="0" style="max-width:600px;background:#ffffff;border:1px solid ${C.line};border-radius:14px;overflow:hidden">` +
     `<tr><td style="background:${C.accent};padding:22px 26px">` +
     `<div style="color:#ffffff;font-size:18px;font-weight:700">L.I.V.E. SJ — Weekly Prospect Report</div>` +
-    // zero-width spaces + element breaks defeat Gmail's address auto-linking
-    `<div style="color:#cfe0f5;font-size:12px;margin-top:4px">City of San José subsidy program · The Fay · 10<span>&#8203;</span> E. Reed<span>&#8203;</span> St.</div>` +
+    // no street address in the header — Gmail auto-links it into a faint link
+    `<div style="color:#cfe0f5;font-size:12px;margin-top:4px">City of San José subsidy program · The Fay</div>` +
     `</td></tr>` +
     `<tr><td style="padding:18px 21px 4px">` +
     `<div style="font-size:12px;color:${C.muted};text-transform:uppercase;letter-spacing:.05em;padding:0 5px 6px">As of ${niceDate(day)} · ${count} prospects</div>` +
