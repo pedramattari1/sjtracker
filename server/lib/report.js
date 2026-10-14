@@ -16,13 +16,23 @@ const C = {
   accent: '#185fa5', accentBg: '#eaf1fb', zero: '#b7b5ad',
 };
 
+const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July',
+  'August', 'September', 'October', 'November', 'December'];
+function niceDate(d) {
+  const [y, m, day] = String(d).split('-').map(Number);
+  if (!y || !m || !day) return d;
+  return `${MONTHS[m - 1]} ${day}, ${y}`;
+}
+
+// Equal-width card (fixed table layout) with vertically-centered, uniform-height content.
 function statCard(value, label, primary) {
   return (
-    `<td style="padding:5px"><div style="border:1px solid ${C.line};border-radius:10px;` +
-    `padding:14px 8px;text-align:center;background:${primary ? C.accentBg : '#ffffff'}">` +
+    `<td style="width:20%;padding:5px;vertical-align:top">` +
+    `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid ${C.line};border-radius:10px;background:${primary ? C.accentBg : '#ffffff'}">` +
+    `<tr><td style="height:84px;text-align:center;vertical-align:middle;padding:8px 6px">` +
     `<div style="font-size:24px;font-weight:700;line-height:1;color:${primary ? C.accent : C.ink}">${value}</div>` +
-    `<div style="font-size:10px;color:${C.muted};margin-top:6px;text-transform:uppercase;letter-spacing:.04em">${label}</div>` +
-    `</div></td>`
+    `<div style="font-size:10px;color:${C.muted};margin-top:6px;text-transform:uppercase;letter-spacing:.04em;line-height:1.3">${label}</div>` +
+    `</td></tr></table></td>`
   );
 }
 
@@ -58,11 +68,12 @@ function summaryHtml(summary, day, count) {
     `<table role="presentation" width="600" cellpadding="0" cellspacing="0" style="max-width:600px;background:#ffffff;border:1px solid ${C.line};border-radius:14px;overflow:hidden">` +
     `<tr><td style="background:${C.accent};padding:22px 26px">` +
     `<div style="color:#ffffff;font-size:18px;font-weight:700">L.I.V.E. SJ — Weekly Prospect Report</div>` +
-    `<div style="color:#cfe0f5;font-size:12px;margin-top:4px">City of San José subsidy program · The Fay at 10 E. Reed St.</div>` +
+    // zero-width spaces + element breaks defeat Gmail's address auto-linking
+    `<div style="color:#cfe0f5;font-size:12px;margin-top:4px">City of San José subsidy program · The Fay · 10<span>&#8203;</span> E. Reed<span>&#8203;</span> St.</div>` +
     `</td></tr>` +
     `<tr><td style="padding:18px 21px 4px">` +
-    `<div style="font-size:12px;color:${C.muted};text-transform:uppercase;letter-spacing:.05em;padding:0 5px 6px">Week of ${day} · ${count} prospects</div>` +
-    `<table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>${cards}</tr></table>` +
+    `<div style="font-size:12px;color:${C.muted};text-transform:uppercase;letter-spacing:.05em;padding:0 5px 6px">As of ${niceDate(day)} · ${count} prospects</div>` +
+    `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="table-layout:fixed"><tr>${cards}</tr></table>` +
     `</td></tr>` +
     `<tr><td style="padding:14px 26px 4px">${sectionLabel('Unit preference')}` +
     `<table role="presentation" width="100%" cellpadding="0" cellspacing="0">${summary.units.map((u) => kvRow(u.label, u.value)).join('')}</table></td></tr>` +
