@@ -56,13 +56,25 @@ function barRow(label, value, max) {
 }
 
 /** Render the summary as email-safe HTML shown inline in the body. */
-function summaryHtml(summary, day, count) {
+function summaryHtml(summary, day, count, stamp) {
   const stageMax = Math.max(1, ...summary.stages.map((s) => s.value));
   const cards = summary.headline.map((h, i) => statCard(h.value, h.label, i === 0)).join('');
   const sectionLabel = (t) =>
     `<div style="font-size:12px;font-weight:700;color:${C.muted};text-transform:uppercase;letter-spacing:.05em;margin-bottom:2px">${t}</div>`;
 
+  // Hidden preheader: controls the inbox preview snippet (not shown in the body).
+  // The spacer stops body text bleeding into the snippet; the HTML comment carries
+  // a per-send stamp so no two emails are byte-identical (prevents Gmail trimming).
+  const get = (k) => { const h = summary.headline.find((x) => x.key === k); return h ? h.value : 0; };
+  const pre = `Weekly report · ${count} prospects · ${get('responded')} responded · ${get('applying')} applying/leased · as of ${niceDate(day)}`;
+  const spacer = '&#8203;&nbsp;'.repeat(40);
+  const preheader =
+    `<div style="display:none;max-height:0;overflow:hidden;mso-hide:all;font-size:1px;line-height:1px;color:#f1efe9">${pre}</div>` +
+    `<div style="display:none;max-height:0;overflow:hidden">${spacer}</div>` +
+    `<!-- ${stamp || new Date().toISOString()} -->`;
+
   return (
+    preheader +
     `<div style="margin:0;background:#f1efe9;padding:24px 12px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif">` +
     `<table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr><td align="center">` +
     `<table role="presentation" width="600" cellpadding="0" cellspacing="0" style="max-width:600px;background:#ffffff;border:1px solid ${C.line};border-radius:14px;overflow:hidden">` +
@@ -104,7 +116,7 @@ function buildReportPayload({ records, from, recipients, query, date }) {
     text:
       `L.I.V.E. SJ weekly prospect report for ${day} — ${filtered.length} prospects. ` +
       `View the summary in an HTML-capable email client; full list attached as CSV.`,
-    html: summaryHtml(summary, day, filtered.length),
+    html: summaryHtml(summary, day, filtered.length, new Date().toISOString()),
     attachments: [
       {
         filename: reportFilename(day),
