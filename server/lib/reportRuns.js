@@ -65,9 +65,10 @@ async function ensureTable(pool) {
 /**
  * Atomically claim the week for sending. Returns true if THIS caller may send.
  * - brand-new week: claim.
- * - already 'success': skip (unless force).
+ * - already 'success': NEVER re-claim (unless force) — a sent week stays sent.
  * - 'sending' within last 10 min: skip (another trigger is mid-send).
- * - 'failed' or stale 'sending': re-claim (retry).
+ * - 'failed': re-claim (retry).
+ * - stale 'sending' (>10 min, a crashed/stuck attempt): re-claim.
  */
 async function tryClaimWeek(pool, week, force = false) {
   if (force) {
@@ -80,13 +81,17 @@ async function tryClaimWeek(pool, week, force = false) {
     );
     return true;
   }
+  // Re-claim ONLY a failed attempt or a stale (stuck) 'sending' attempt.
+  // A 'success' row is never re-claimed here — that is what prevents duplicate
+  // weekly sends from a late/backup trigger hours after the real send.
   const r = await pool.query(
     `INSERT INTO report_runs (week, status, attempt, updated_at)
      VALUES ($1, 'sending', 1, now())
      ON CONFLICT (week) DO UPDATE SET status='sending',
        attempt=report_runs.attempt+1, updated_at=now()
-     WHERE report_runs.status NOT IN ('success','sending')
-        OR report_runs.updated_at < now() - interval '10 minutes'
+     WHERE report_runs.status = 'failed'
+        OR (report_runs.status = 'sending'
+            AND report_runs.updated_at < now() - interval '10 minutes')
      RETURNING week`,
     [week],
   );

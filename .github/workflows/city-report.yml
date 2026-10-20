@@ -2,22 +2,15 @@ name: Weekly city prospect report
 
 # Emails the current prospect CSV to the city recipient list.
 #
-# This is now a TERTIARY backup. The primary trigger is the in-process scheduler
-# in the API (node-cron, 08:00 America/Los_Angeles, DST-correct), with an external
-# cron (cron-job.org) as secondary. The report is idempotent per ISO week, so this
-# job no-ops if the report already went out that week.
-#
-# NOTE: GitHub Actions cron is always UTC, best-effort, and most delayed at the top
-# of the hour — so we use minute 7, not 0. `7 15 * * 1` = Mondays 15:07 UTC = 08:07
-# PDT / 07:07 PST (drifts 1h with DST). Because delivery no longer depends on this
-# job's punctuality, the drift/delay is harmless.
-#
-# NOTE: GitHub disables scheduled workflows after 60 days of no repo activity.
-# Any commit re-arms it; you can also trigger it manually below.
+# MANUAL-ONLY. The primary (and only automatic) trigger is the in-process scheduler
+# in the API (node-cron, 08:00 America/Los_Angeles, DST-correct), backed by catch-up
+# on restart. The GitHub Actions *schedule* trigger was removed on 2026-10-20: it
+# fired 5+ hours late (GitHub cron is best-effort) and, combined with an idempotency
+# bug, caused a duplicate send. This workflow remains for on-demand manual runs only.
+# The report endpoint is idempotent per ISO week, so a manual run no-ops if the week
+# was already sent (use with care).
 
 on:
-  schedule:
-    - cron: "7 15 * * 1" # Mondays 15:07 UTC (backup; primary is the API scheduler)
   workflow_dispatch: {}
 
 jobs:
