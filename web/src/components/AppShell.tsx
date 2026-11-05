@@ -1,12 +1,13 @@
 import type { ReactNode } from "react";
 import { NavLink } from "react-router-dom";
 import { UserButton, useClerk } from "@clerk/clerk-react";
-import { LayoutDashboard, Users, FileText, LogOut } from "lucide-react";
+import { LayoutDashboard, Users, FileText, Mail, LogOut } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const NAV = [
   { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { to: "/prospects", label: "Prospects", icon: Users },
+  { to: "/messaging", label: "Messaging", icon: Mail },
   { to: "/reports", label: "Reports", icon: FileText },
 ];
 

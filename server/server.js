@@ -1,6 +1,10 @@
 // L.I.V.E. SJ Prospect Tracker — API server
 // Express + Postgres. No auth (internal team use). Deploy on Railway.
 
+// Local dev convenience: load a .env if present. No-op in production (Railway
+// injects env) and no hard dependency — if dotenv isn't installed we carry on.
+try { require('dotenv').config(); } catch { /* dotenv optional (prod uses injected env) */ }
+
 const express = require('express');
 const cors = require('cors');
 const { Pool } = require('pg');
@@ -11,6 +15,14 @@ const { buildReportPayload } = require('./lib/report');
 const recipientsDb = require('./lib/recipients');
 const reportRuns = require('./lib/reportRuns');
 const cron = require('node-cron');
+
+// --- Nurture / two-way messaging (Phase 1) ---
+const cryptoBox = require('./lib/cryptoBox');
+const google = require('./lib/google');
+const emailAccounts = require('./lib/emailAccounts');
+const conversations = require('./lib/conversations');
+const messages = require('./lib/messages');
+const gmailSync = require('./lib/gmailSync');
 
 const app = express();
 app.use(cors());               // CORS so the Vercel frontend can call this
@@ -104,6 +116,16 @@ async function initDb() {
   }
   await recipientsDb.ensureTable(pool); // additive; does not touch prospects
   await reportRuns.ensureTable(pool);   // additive; idempotency ledger
+
+  // Nurture feature tables (all additive; prospects untouched). Order matters:
+  // conversations/messages FK email_accounts.
+  await emailAccounts.ensureTable(pool);
+  await conversations.ensureTable(pool);
+  await messages.ensureTable(pool);
+  // Additive index to match inbound/prospect lookups by email (spec §4).
+  await pool.query(
+    "CREATE INDEX IF NOT EXISTS prospects_email_idx ON prospects ((lower(data->>'email')));",
+  );
 }
 
 // ---- Weekly report: one guarded path for all triggers ----
@@ -295,10 +317,198 @@ app.delete('/api/prospects/:id', auth, async (req, res) => {
   } catch (e) { console.error(e); res.status(500).json({ error: 'delete_failed' }); }
 });
 
+// ======================================================================
+// Nurture / two-way messaging — Phase 1 (email plumbing, one account)
+// ======================================================================
+
+// --- OAuth connect (user-consent). Start is Clerk-gated; the callback is
+// public (Google redirects the browser with no Clerk token) and trusted via a
+// signed `state` carrying the Clerk userId + a nonce.
+
+app.get('/api/oauth/google/start', auth, (req, res) => {
+  try {
+    const { userId } = getAuth(req);
+    const state = cryptoBox.signState({
+      uid: userId,
+      nonce: Math.random().toString(36).slice(2),
+      ts: Date.now(),
+    });
+    return res.json({ url: google.buildAuthUrl(state) });
+  } catch (e) {
+    console.error('[oauth] start failed:', e.message);
+    return res.status(500).json({ error: 'oauth_start_failed' });
+  }
+});
+
+app.get('/api/oauth/google/callback', async (req, res) => {
+  const appBase = process.env.APP_BASE_URL || '/';
+  const fail = (reason) => res.redirect(`${appBase}/messaging?connected=0&reason=${encodeURIComponent(reason)}`);
+  try {
+    const { code, state, error } = req.query;
+    if (error) return fail(String(error));
+    if (!code || !state) return fail('missing_code_or_state');
+
+    // 10-minute window on the signed state.
+    const payload = cryptoBox.verifyState(String(state), { maxAgeMs: 10 * 60 * 1000 });
+    if (!payload) return fail('bad_state');
+
+    const tokens = await google.exchangeCode(String(code));
+    if (!tokens.refresh_token) {
+      // Google only returns a refresh token on first consent / with prompt=consent.
+      return fail('no_refresh_token');
+    }
+
+    // Identify the mailbox + seed the inbound poll baseline from the profile
+    // historyId (required adjustment — otherwise the first history.list has no
+    // starting point).
+    const profile = await google.getProfile(tokens.access_token);
+    const email = profile.emailAddress;
+
+    await emailAccounts.upsertAccount(pool, {
+      clerkUserId: payload.uid,
+      email,
+      displayName: email,
+      refreshToken: tokens.refresh_token,
+      historyId: profile.historyId,
+    });
+
+    console.log(`[oauth] connected ${email} (historyId baseline ${profile.historyId})`);
+    return res.redirect(`${appBase}/messaging?connected=1&email=${encodeURIComponent(email)}`);
+  } catch (e) {
+    console.error('[oauth] callback failed:', e.message);
+    return fail('callback_error');
+  }
+});
+
+// List connected accounts (never exposes tokens).
+app.get('/api/email-accounts', auth, async (_req, res) => {
+  try { res.json(await emailAccounts.listAccounts(pool)); }
+  catch (e) { console.error(e); res.status(500).json({ error: 'read_failed' }); }
+});
+
+// Conversations + their messages (prove inbound landed).
+app.get('/api/conversations', auth, async (_req, res) => {
+  try { res.json(await conversations.listConversations(pool)); }
+  catch (e) { console.error(e); res.status(500).json({ error: 'read_failed' }); }
+});
+
+app.get('/api/conversations/:id/messages', auth, async (req, res) => {
+  try { res.json(await messages.listByConversation(pool, req.params.id)); }
+  catch (e) { console.error(e); res.status(500).json({ error: 'read_failed' }); }
+});
+
+/**
+ * Send an in-app message as a real Gmail email (spec §2.3). Thread-bound: if the
+ * prospect already has a conversation, reuse its account + Gmail thread and set
+ * threading headers; otherwise start a new thread from the default account.
+ * Body: { prospectId?, toEmail?, subject, bodyText, bodyHtml? }
+ */
+app.post('/api/messages/send', auth, async (req, res) => {
+  try {
+    const { prospectId, subject, bodyText, bodyHtml } = req.body || {};
+    let toEmail = (req.body && req.body.toEmail ? String(req.body.toEmail) : '').trim();
+
+    // Resolve the recipient from the prospect when not given explicitly.
+    if (prospectId && !toEmail) {
+      const r = await pool.query("SELECT data->>'email' AS email FROM prospects WHERE id = $1", [prospectId]);
+      toEmail = (r.rows[0] && r.rows[0].email ? String(r.rows[0].email) : '').trim();
+    }
+    if (!toEmail || !toEmail.includes('@')) return res.status(400).json({ error: 'invalid_recipient' });
+
+    // Pick the sending account: the prospect's existing thread account, else default.
+    let convo = null;
+    let account = null;
+    if (prospectId) {
+      const existing = await pool.query(
+        'SELECT * FROM conversations WHERE prospect_id = $1 ORDER BY created_at ASC LIMIT 1', [prospectId],
+      );
+      convo = existing.rows[0] || null;
+      if (convo) account = await emailAccounts.getById(pool, convo.email_account_id);
+    }
+    if (!account) account = await emailAccounts.getDefaultAccount(pool);
+    if (!account) return res.status(400).json({ error: 'no_connected_account' });
+
+    // Ensure a conversation bound to this account.
+    if (!convo) {
+      convo = await conversations.upsertForSend(pool, { prospectId, emailAccountId: account.id, subject });
+    }
+
+    // Threading headers from the last message in the thread (if any).
+    let inReplyTo = null;
+    let references = null;
+    if (convo.gmail_thread_id) {
+      const last = await messages.lastInThread(pool, convo.gmail_thread_id);
+      if (last && last.rfc822_message_id) {
+        inReplyTo = last.rfc822_message_id;
+        references = last.rfc822_message_id;
+      }
+    }
+
+    const { raw, messageId } = google.buildMime({
+      fromEmail: account.email,
+      fromName: account.display_name,
+      toEmail,
+      subject: subject || '',
+      bodyText: bodyText || '',
+      bodyHtml: bodyHtml || '',
+      inReplyTo,
+      references,
+    });
+
+    const refreshToken = await emailAccounts.getDecryptedRefreshToken(pool, account.id);
+    if (!refreshToken) return res.status(500).json({ error: 'account_missing_token' });
+    const accessToken = await google.refreshAccessToken(refreshToken);
+
+    const sent = await google.gmailSend({
+      accessToken, raw, threadId: convo.gmail_thread_id || undefined,
+    });
+
+    // Persist thread id (first send) + the outbound message.
+    if (!convo.gmail_thread_id && sent.threadId) {
+      await conversations.setThreadId(pool, convo.id, sent.threadId);
+      convo.gmail_thread_id = sent.threadId;
+    }
+    const nowIso = new Date().toISOString();
+    const stored = await messages.insertMessage(pool, {
+      conversationId: convo.id,
+      direction: 'outbound',
+      gmailMessageId: sent.id,
+      gmailThreadId: sent.threadId,
+      rfc822MessageId: messageId,
+      fromEmail: account.email,
+      toEmail,
+      subject: subject || '',
+      bodyHtml: bodyHtml || '',
+      bodyText: bodyText || '',
+      snippet: (bodyText || '').slice(0, 140),
+      sentAt: nowIso,
+    });
+    await conversations.touchOutbound(pool, convo.id, nowIso);
+
+    return res.json({
+      ok: true,
+      conversationId: convo.id,
+      gmailThreadId: sent.threadId,
+      gmailMessageId: sent.id,
+      message: stored,
+    });
+  } catch (e) {
+    console.error('[send] failed:', e.message);
+    return res.status(502).json({ error: 'send_failed', detail: e.message });
+  }
+});
+
+// Kick an immediate inbound sync (so testing doesn't wait for the 90s poll).
+app.post('/api/sync/run', auth, async (_req, res) => {
+  try { res.json({ ok: true, results: await gmailSync.syncAll(pool) }); }
+  catch (e) { console.error('[sync] run failed:', e.message); res.status(500).json({ error: 'sync_failed' }); }
+});
+
 const PORT = process.env.PORT || 3000;
 initDb()
   .then(() => {
     app.listen(PORT, () => console.log('API listening on ' + PORT));
     startScheduler();
+    gmailSync.startInboundPoll(pool); // in-process inbound poll (Phase 1)
   })
   .catch(err => { console.error('DB init failed:', err); process.exit(1); });

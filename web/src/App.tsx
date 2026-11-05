@@ -4,6 +4,7 @@ import { AppShell } from "@/components/AppShell";
 import { Dashboard } from "@/pages/Dashboard";
 import { Prospects } from "@/pages/Prospects";
 import { Reports } from "@/pages/Reports";
+import { Messaging } from "@/pages/Messaging";
 
 export default function App() {
   return (
@@ -29,6 +30,7 @@ export default function App() {
             <Route path="/dashboard" element={<Dashboard />} />
             <Route path="/prospects" element={<Prospects />} />
             <Route path="/reports" element={<Reports />} />
+            <Route path="/messaging" element={<Messaging />} />
             <Route path="*" element={<Navigate to="/dashboard" replace />} />
           </Routes>
         </AppShell>

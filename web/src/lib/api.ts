@@ -1,4 +1,11 @@
-import type { Prospect, ProspectInput, Recipient } from "@/lib/types";
+import type {
+  Prospect,
+  ProspectInput,
+  Recipient,
+  EmailAccount,
+  Conversation,
+  Message,
+} from "@/lib/types";
 
 const BASE = import.meta.env.VITE_API_BASE_URL;
 
@@ -121,6 +128,78 @@ export async function deleteRecipient(
     headers: await authHeaders(getToken),
   });
   if (!res.ok) throw new Error(`DELETE /api/recipients/${id} failed: ${res.status}`);
+}
+
+// ---- Nurture / two-way messaging (Phase 1) ----
+
+export async function fetchEmailAccounts(getToken: TokenGetter): Promise<EmailAccount[]> {
+  const res = await fetch(`${BASE}/api/email-accounts`, {
+    headers: await authHeaders(getToken),
+  });
+  if (!res.ok) throw new Error(`GET /api/email-accounts failed: ${res.status}`);
+  return (await res.json()) as EmailAccount[];
+}
+
+/** Kick off Google OAuth: fetch the signed consent URL, then redirect the browser. */
+export async function startGoogleOAuth(getToken: TokenGetter): Promise<void> {
+  const res = await fetch(`${BASE}/api/oauth/google/start`, {
+    headers: await authHeaders(getToken),
+  });
+  if (!res.ok) throw new Error(`OAuth start failed: ${res.status}`);
+  const { url } = (await res.json()) as { url: string };
+  window.location.href = url;
+}
+
+export async function fetchConversations(getToken: TokenGetter): Promise<Conversation[]> {
+  const res = await fetch(`${BASE}/api/conversations`, {
+    headers: await authHeaders(getToken),
+  });
+  if (!res.ok) throw new Error(`GET /api/conversations failed: ${res.status}`);
+  return (await res.json()) as Conversation[];
+}
+
+export async function fetchMessages(
+  getToken: TokenGetter,
+  conversationId: string,
+): Promise<Message[]> {
+  const res = await fetch(
+    `${BASE}/api/conversations/${encodeURIComponent(conversationId)}/messages`,
+    { headers: await authHeaders(getToken) },
+  );
+  if (!res.ok) throw new Error(`GET messages failed: ${res.status}`);
+  return (await res.json()) as Message[];
+}
+
+export interface SendMessageInput {
+  prospectId?: string;
+  toEmail?: string;
+  subject: string;
+  bodyText: string;
+}
+
+export async function sendMessage(
+  getToken: TokenGetter,
+  input: SendMessageInput,
+): Promise<{ conversationId: string; gmailThreadId: string }> {
+  const res = await fetch(`${BASE}/api/messages/send`, {
+    method: "POST",
+    headers: await authHeaders(getToken),
+    body: JSON.stringify(input),
+  });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as { error?: string; detail?: string };
+    throw new Error(body.detail || body.error || `send failed: ${res.status}`);
+  }
+  return (await res.json()) as { conversationId: string; gmailThreadId: string };
+}
+
+/** Trigger an immediate inbound sync (don't wait for the 90s poll). */
+export async function runSync(getToken: TokenGetter): Promise<void> {
+  const res = await fetch(`${BASE}/api/sync/run`, {
+    method: "POST",
+    headers: await authHeaders(getToken),
+  });
+  if (!res.ok) throw new Error(`sync failed: ${res.status}`);
 }
 
 /** Build a full ProspectInput from a possibly-partial record (fills blanks). */
