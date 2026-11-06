@@ -4,6 +4,42 @@ Spec: `docs/nurture-spec.md`. Build-on-these facts in the spec header.
 
 ---
 
+# Phase 2b — Attachments + status affordance  ✅ built, awaiting review
+
+Attachments (send + view inbound) deferred from Phase 2, plus a thread-header
+status-control affordance fix. Approved cap: **~15 MB** outbound binary (keeps
+the base64-encoded message under Gmail's 25 MB limit); inbound uncapped.
+
+## Checklist
+- [x] `server/lib/messageAttachments.js` — `message_attachments` table + insert / listByMessageIds / getForDownload / setGmailAttachmentId
+- [x] `server/lib/google.js` — `buildMime` wraps in `multipart/mixed` when attachments present; `attachmentGet`; pure `extractAttachments`
+- [x] `server/lib/gmailSync.js` — store inbound attachment metadata during sync (no cap)
+- [x] `server/server.js` —
+  - global `express.json()` keeps the 100kb default but **skips** `POST /api/messages/send`, which gets route-scoped `express.json({limit:'30mb'})`
+  - send accepts `attachments[]` (base64), enforces the **15 MB** cap (`413 attachment_too_large`), surfaces Gmail oversize errors clearly, persists metadata, and best-effort captures sent attachment ids for download
+  - `GET …/messages` includes each message's `attachments`
+  - `GET /api/attachments/:attId` — Clerk-gated proxy streaming Gmail bytes
+- [x] `server/test/mime.test.js` — multipart/mixed + base64 part + threading + `extractAttachments` (DB-free); added to `npm test` chain (now cryptoBox + quoted + mime + reportRuns)
+- [x] `web/src/lib/types.ts` — `MessageAttachment`; `Message.attachments`
+- [x] `web/src/lib/files.ts` — `fileToBase64`, `formatBytes`, `MAX_ATTACH_BYTES` (15 MB)
+- [x] `web/src/lib/api.ts` — `SendMessageInput.attachments`; `downloadAttachment` (token-fetch → blob)
+- [x] `web/src/components/ThreadView.tsx` —
+  - composer: Attach button + selected-files list (name/size/remove) + running total w/ 15 MB guard; reads files → base64 on send
+  - bubbles: attachment chips with download (paperclip + size)
+  - status control: bordered button + `ChevronDown` so it reads as a dropdown
+
+## Review (results)
+- `node --check` all; `node test/mime.test.js` **ALL PASS**; cryptoBox + quoted still PASS
+- web `tsc` / `eslint src` clean; `vite build` succeeds
+- Not run (needs live Clerk + API + Gmail — you drive): send with a file, open an inbound attachment, the 15 MB client+server guard, Gmail oversize path, outbound-attachment download.
+- Guardrails: additive `message_attachments` only; `prospects` untouched; sends stay thread-bound/Gmail-only; the raised JSON limit is **route-scoped to send**, not global.
+
+### Notes / deferred
+- Outbound attachment download depends on the post-send id capture (best effort); if Gmail returns the sent parts, it works; otherwise the chip still shows but download may 409 (`attachment_not_fetchable`).
+- Phase 3 unchanged: snooze, set reply tags, prospect-facts sidebar, snippets, nav badge, bulk actions.
+
+---
+
 # Phase 2 — Conversations inbox (core)  ✅ built, awaiting review
 
 Scope (§10 Phase 2) + three fold-ins. Attachments **deferred to 2b** (approved).

@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { ArrowLeft, ChevronDown, ChevronRight, Trash2 } from "lucide-react";
+import { ArrowLeft, ChevronDown, ChevronRight, Paperclip, Trash2, X, Download } from "lucide-react";
 import type {
   Conversation,
   Message,
+  MessageAttachment,
   ConversationNote,
   ConversationEvent,
 } from "@/lib/types";
@@ -16,10 +17,12 @@ import {
   fetchEvents,
   sendMessage,
   setConversationStatus,
+  downloadAttachment,
 } from "@/lib/api";
 import { Avatar } from "@/components/Avatar";
 import { fmtAbsolute, fmtRelative } from "@/lib/time";
 import { CONVO_STATUS_OPTIONS, convoStatusCls } from "@/lib/convoBadges";
+import { fileToBase64, formatBytes, MAX_ATTACH_BYTES, type PendingAttachment } from "@/lib/files";
 import { cn } from "@/lib/utils";
 
 type Tab = "messages" | "notes" | "activity";
@@ -29,7 +32,7 @@ function displayName(c: Conversation): string {
   return full || c.prospect_email || c.subject || "Conversation";
 }
 
-function MessageBubble({ m }: { m: Message }) {
+function MessageBubble({ m, onDownload }: { m: Message; onDownload: (a: MessageAttachment) => void }) {
   const [showQuoted, setShowQuoted] = useState(false);
   const outbound = m.direction === "outbound";
   const visible = m.body_visible ?? m.body_text ?? m.snippet ?? "";
@@ -70,6 +73,26 @@ function MessageBubble({ m }: { m: Message }) {
             ) : null}
           </div>
         ) : null}
+        {m.attachments && m.attachments.length > 0 ? (
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            {m.attachments.map((a) => (
+              <button
+                key={a.id}
+                onClick={() => onDownload(a)}
+                className={cn(
+                  "inline-flex items-center gap-1.5 rounded-lg px-2 py-1 text-[11px] font-medium",
+                  outbound ? "bg-sky-500/50 text-sky-50 hover:bg-sky-500" : "border border-neutral-200 bg-neutral-50 text-neutral-700 hover:bg-neutral-100",
+                )}
+                title={`Download ${a.filename ?? "attachment"}`}
+              >
+                <Paperclip className="h-3 w-3" />
+                <span className="max-w-[160px] truncate">{a.filename ?? "attachment"}</span>
+                {a.size_bytes ? <span className="opacity-70">{formatBytes(a.size_bytes)}</span> : null}
+                <Download className="h-3 w-3" />
+              </button>
+            ))}
+          </div>
+        ) : null}
       </div>
     </div>
   );
@@ -92,11 +115,45 @@ export function ThreadView({
   const [events, setEvents] = useState<ConversationEvent[]>([]);
   const [status, setStatus] = useState(conversation.status);
   const [reply, setReply] = useState("");
+  const [pending, setPending] = useState<PendingAttachment[]>([]);
   const [noteDraft, setNoteDraft] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const fileInput = useRef<HTMLInputElement>(null);
 
   const name = displayName(conversation);
+  const pendingTotal = pending.reduce((n, a) => n + a.sizeBytes, 0);
+  const overCap = pendingTotal > MAX_ATTACH_BYTES;
+
+  async function handleDownload(a: MessageAttachment) {
+    try {
+      await downloadAttachment(token, a.id, a.filename ?? "attachment");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Download failed");
+    }
+  }
+
+  async function handlePickFiles(e: React.ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(e.target.files ?? []);
+    e.target.value = ""; // allow re-selecting the same file
+    try {
+      const added = await Promise.all(
+        files.map(async (f) => ({
+          filename: f.name,
+          mimeType: f.type || "application/octet-stream",
+          dataBase64: await fileToBase64(f),
+          sizeBytes: f.size,
+        })),
+      );
+      setPending((prev) => [...prev, ...added]);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not read file");
+    }
+  }
+
+  function removePending(i: number) {
+    setPending((prev) => prev.filter((_, idx) => idx !== i));
+  }
 
   const loadMessages = useCallback(async () => {
     setMessages(await fetchMessages(token, conversation.id));
@@ -106,6 +163,7 @@ export function ThreadView({
     setStatus(conversation.status);
     setTab("messages");
     setReply("");
+    setPending([]);
     setError(null);
     void loadMessages().catch((e) => setError(e instanceof Error ? e.message : "Failed to load"));
   }, [conversation.id, conversation.status, loadMessages]);
@@ -128,7 +186,8 @@ export function ThreadView({
 
   async function handleSend(e: React.FormEvent) {
     e.preventDefault();
-    if (!reply.trim()) return;
+    if (!reply.trim() && pending.length === 0) return;
+    if (overCap) { setError("Attachments exceed the 15 MB limit."); return; }
     setBusy(true);
     setError(null);
     try {
@@ -136,8 +195,10 @@ export function ThreadView({
         conversationId: conversation.id,
         subject: conversation.subject ? `Re: ${conversation.subject.replace(/^Re:\s*/i, "")}` : "",
         bodyText: reply,
+        attachments: pending.map(({ filename, mimeType, dataBase64 }) => ({ filename, mimeType, dataBase64 })),
       });
       setReply("");
+      setPending([]);
       await loadMessages();
       onChanged();
     } catch (e) {
@@ -208,19 +269,21 @@ export function ThreadView({
             <div className="truncate text-sm font-semibold">{name}</div>
             <div className="truncate text-xs text-neutral-500">{conversation.prospect_email || "—"}</div>
           </div>
-          <select
-            value={status}
-            onChange={(e) => void handleStatus(e.target.value)}
-            className={cn(
-              "cursor-pointer appearance-none rounded-full border-0 px-2.5 py-1 text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-sky-400",
-              convoStatusCls(status),
-            )}
-            title="Conversation status"
-          >
-            {CONVO_STATUS_OPTIONS.map((o) => (
-              <option key={o.value} value={o.value}>{o.label}</option>
-            ))}
-          </select>
+          {/* Status: styled as a button with a chevron so it reads as a dropdown. */}
+          <div className={cn("relative inline-flex items-center rounded-full ring-1 ring-inset ring-black/10", convoStatusCls(status))}>
+            <select
+              value={status}
+              onChange={(e) => void handleStatus(e.target.value)}
+              className="cursor-pointer appearance-none rounded-full border-0 bg-transparent py-1 pl-2.5 pr-7 text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-sky-400"
+              title="Change conversation status"
+              aria-label="Conversation status"
+            >
+              {CONVO_STATUS_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>{o.label}</option>
+              ))}
+            </select>
+            <ChevronDown className="pointer-events-none absolute right-1.5 h-3.5 w-3.5 opacity-70" />
+          </div>
         </div>
         <div className="mt-2 flex items-center justify-between text-[11px] text-neutral-400">
           <span>Sending from <span className="font-medium text-neutral-600">{conversation.account_email || "—"}</span></span>
@@ -242,7 +305,7 @@ export function ThreadView({
             {messages.length === 0 ? (
               <p className="text-center text-xs text-neutral-400">No messages yet.</p>
             ) : (
-              messages.map((m) => <MessageBubble key={m.id} m={m} />)
+              messages.map((m) => <MessageBubble key={m.id} m={m} onDownload={handleDownload} />)
             )}
           </div>
         ) : null}
@@ -309,9 +372,35 @@ export function ThreadView({
             rows={3}
             className="w-full rounded-lg border border-neutral-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-sky-400"
           />
-          <div className="mt-2 flex items-center justify-between">
-            <span className="text-[11px] text-neutral-400">Sends as a real email, in-thread.</span>
-            <button type="submit" disabled={busy || !reply.trim()} className="rounded-lg bg-sky-600 px-4 py-2 text-sm font-medium text-white hover:bg-sky-700 disabled:opacity-50">
+          {pending.length > 0 ? (
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              {pending.map((a, i) => (
+                <span key={i} className="inline-flex items-center gap-1.5 rounded-lg border border-neutral-200 bg-neutral-50 px-2 py-1 text-[11px] text-neutral-700">
+                  <Paperclip className="h-3 w-3" />
+                  <span className="max-w-[160px] truncate">{a.filename}</span>
+                  <span className="opacity-70">{formatBytes(a.sizeBytes)}</span>
+                  <button type="button" onClick={() => removePending(i)} className="text-neutral-400 hover:text-red-600" aria-label={`Remove ${a.filename}`}>
+                    <X className="h-3 w-3" />
+                  </button>
+                </span>
+              ))}
+            </div>
+          ) : null}
+          <input ref={fileInput} type="file" multiple className="hidden" onChange={(e) => void handlePickFiles(e)} />
+          <div className="mt-2 flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => fileInput.current?.click()}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-neutral-300 px-2.5 py-2 text-sm font-medium text-neutral-600 hover:bg-neutral-50"
+              >
+                <Paperclip className="h-4 w-4" /> Attach
+              </button>
+              <span className={cn("text-[11px]", overCap ? "font-medium text-red-600" : "text-neutral-400")}>
+                {pending.length > 0 ? `${formatBytes(pendingTotal)} / 15 MB` : "Sends as a real email, in-thread."}
+              </span>
+            </div>
+            <button type="submit" disabled={busy || overCap || (!reply.trim() && pending.length === 0)} className="rounded-lg bg-sky-600 px-4 py-2 text-sm font-medium text-white hover:bg-sky-700 disabled:opacity-50">
               {busy ? "Sending…" : "Send reply"}
             </button>
           </div>

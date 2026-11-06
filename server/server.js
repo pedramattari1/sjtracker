@@ -22,6 +22,7 @@ const google = require('./lib/google');
 const emailAccounts = require('./lib/emailAccounts');
 const conversations = require('./lib/conversations');
 const messages = require('./lib/messages');
+const messageAttachments = require('./lib/messageAttachments');
 const gmailSync = require('./lib/gmailSync');
 const quoted = require('./lib/quoted');
 const conversationNotes = require('./lib/conversationNotes');
@@ -29,7 +30,15 @@ const conversationEvents = require('./lib/conversationEvents');
 
 const app = express();
 app.use(cors());               // CORS so the Vercel frontend can call this
-app.use(express.json());
+// JSON body parsing with the default 100kb limit for every route EXCEPT the
+// message-send path, which carries base64 attachments and gets its own
+// route-scoped parser with a higher limit (see the send route). Keeping the
+// bigger limit off the global parser avoids buffering large bodies app-wide.
+const parseJson = express.json();
+app.use((req, res, next) => {
+  if (req.method === 'POST' && req.path === '/api/messages/send') return next();
+  return parseJson(req, res, next);
+});
 app.use(clerkMiddleware());    // attaches auth to req; verifies the Clerk session
 
 // Gate every /api/prospects route: no/invalid Clerk token -> 401 (JSON, not a
@@ -127,6 +136,7 @@ async function initDb() {
   await messages.ensureTable(pool);
   await conversationNotes.ensureTable(pool);   // Phase 2
   await conversationEvents.ensureTable(pool);  // Phase 2
+  await messageAttachments.ensureTable(pool);  // Phase 2b
   // Additive index to match inbound/prospect lookups by email (spec §4).
   await pool.query(
     "CREATE INDEX IF NOT EXISTS prospects_email_idx ON prospects ((lower(data->>'email')));",
@@ -400,12 +410,22 @@ app.get('/api/conversations', auth, async (_req, res) => {
 app.get('/api/conversations/:id/messages', auth, async (req, res) => {
   try {
     const rows = await messages.listByConversation(pool, req.params.id);
+    // Attachment metadata per message (Phase 2b; bytes fetched on demand).
+    const attByMsg = {};
+    const atts = await messageAttachments.listByMessageIds(pool, rows.map((m) => m.id));
+    for (const a of atts) (attByMsg[a.message_id] ||= []).push(a);
     // Server-side quoted-history strip (Phase 2): the bubble shows body_visible
     // and reveals body_quoted behind a "show quoted text" expander. Raw
     // body_text is left untouched for anyone who needs the full source.
     const withSplit = rows.map((m) => {
       const s = quoted.splitQuoted(m.body_text || '', m.body_html || '');
-      return { ...m, body_visible: s.visible, body_quoted: s.quoted, has_quoted: s.hasQuoted };
+      return {
+        ...m,
+        body_visible: s.visible,
+        body_quoted: s.quoted,
+        has_quoted: s.hasQuoted,
+        attachments: attByMsg[m.id] || [],
+      };
     });
     res.json(withSplit);
   } catch (e) { console.error(e); res.status(500).json({ error: 'read_failed' }); }
@@ -473,10 +493,44 @@ app.get('/api/conversations/:id/events', auth, async (req, res) => {
  * When conversationId is given (replying from the inbox) the thread's bound
  * account is used and the recipient defaults to the latest inbound sender.
  */
-app.post('/api/messages/send', auth, async (req, res) => {
+// Route-scoped JSON parser with a higher limit so base64 attachments aren't
+// rejected by the global 100kb default. 30mb of base64 comfortably holds the
+// ~15mb binary cap enforced below (base64 inflates ~33%).
+const sendJson = express.json({ limit: '30mb' });
+
+// ~15 MB total of binary attachment content keeps the whole encoded message
+// under Gmail's 25 MB limit after base64 inflation (spec/owner guidance).
+const MAX_ATTACH_BYTES = 15 * 1024 * 1024;
+
+/** Decoded byte length of a base64 string (without allocating the buffer). */
+function base64Bytes(b64) {
+  const s = String(b64 || '').replace(/\s+/g, '');
+  if (!s) return 0;
+  const padding = s.endsWith('==') ? 2 : s.endsWith('=') ? 1 : 0;
+  return Math.floor((s.length * 3) / 4) - padding;
+}
+
+app.post('/api/messages/send', sendJson, auth, async (req, res) => {
   try {
     const { conversationId, prospectId, subject, bodyText, bodyHtml } = req.body || {};
     let toEmail = (req.body && req.body.toEmail ? String(req.body.toEmail) : '').trim();
+
+    // Validate + size-cap attachments up front.
+    const rawAttachments = Array.isArray(req.body && req.body.attachments) ? req.body.attachments : [];
+    const attachments = rawAttachments
+      .filter((a) => a && a.dataBase64)
+      .map((a) => ({
+        filename: String(a.filename || 'attachment'),
+        mimeType: String(a.mimeType || 'application/octet-stream'),
+        dataBase64: String(a.dataBase64),
+      }));
+    const totalBytes = attachments.reduce((n, a) => n + base64Bytes(a.dataBase64), 0);
+    if (totalBytes > MAX_ATTACH_BYTES) {
+      return res.status(413).json({
+        error: 'attachment_too_large',
+        detail: `Attachments total ${(totalBytes / 1048576).toFixed(1)} MB; the limit is 15 MB.`,
+      });
+    }
 
     let convo = null;
     let account = null;
@@ -551,15 +605,24 @@ app.post('/api/messages/send', auth, async (req, res) => {
       bodyHtml: bodyHtml || '',
       inReplyTo,
       references,
+      attachments,
     });
 
     const refreshToken = await emailAccounts.getDecryptedRefreshToken(pool, account.id);
     if (!refreshToken) return res.status(500).json({ error: 'account_missing_token' });
     const accessToken = await google.refreshAccessToken(refreshToken);
 
-    const sent = await google.gmailSend({
-      accessToken, raw, threadId: convo.gmail_thread_id || undefined,
-    });
+    let sent;
+    try {
+      sent = await google.gmailSend({ accessToken, raw, threadId: convo.gmail_thread_id || undefined });
+    } catch (e) {
+      // Gmail rejects a message over 25 MB encoded — surface a clear message
+      // rather than a generic failure.
+      if (/size|too large|limit|413/i.test(e.message)) {
+        return res.status(413).json({ error: 'attachment_too_large', detail: 'Gmail rejected the message as too large. Try smaller attachments.' });
+      }
+      throw e;
+    }
 
     // Persist thread id (first send) + the outbound message.
     if (!convo.gmail_thread_id && sent.threadId) {
@@ -583,6 +646,34 @@ app.post('/api/messages/send', auth, async (req, res) => {
     });
     await conversations.touchOutbound(pool, convo.id, nowIso);
 
+    // Persist outbound attachment metadata. Then best-effort read the sent
+    // message back to capture each attachment's Gmail id so it's downloadable
+    // through the proxy (non-fatal — the send already succeeded).
+    if (attachments.length && stored) {
+      const storedRows = [];
+      for (const a of attachments) {
+        const row = await messageAttachments.insert(pool, {
+          messageId: stored.id,
+          filename: a.filename,
+          mimeType: a.mimeType,
+          sizeBytes: base64Bytes(a.dataBase64),
+          direction: 'outbound',
+        });
+        storedRows.push(row);
+      }
+      try {
+        const full = await google.messageGet({ accessToken, id: sent.id });
+        const parts = google.extractAttachments(full.payload || {});
+        // Match by filename (best effort); fall back to positional order.
+        storedRows.forEach((row, i) => {
+          const match = parts.find((p) => p.filename === row.filename) || parts[i];
+          if (match && match.attachmentId) {
+            void messageAttachments.setGmailAttachmentId(pool, row.id, match.attachmentId);
+          }
+        });
+      } catch (e) { console.error('[send] outbound attachment id capture failed:', e.message); }
+    }
+
     return res.json({
       ok: true,
       conversationId: convo.id,
@@ -600,6 +691,33 @@ app.post('/api/messages/send', auth, async (req, res) => {
 app.post('/api/sync/run', auth, async (_req, res) => {
   try { res.json({ ok: true, results: await gmailSync.syncAll(pool) }); }
   catch (e) { console.error('[sync] run failed:', e.message); res.status(500).json({ error: 'sync_failed' }); }
+});
+
+// Download one attachment's bytes (Clerk-gated proxy). Looks up the Gmail
+// attachment id + its message + the conversation's sending account, refreshes
+// that account's token, fetches the bytes via attachments.get, and streams them.
+app.get('/api/attachments/:attId', auth, async (req, res) => {
+  try {
+    const row = await messageAttachments.getForDownload(pool, req.params.attId);
+    if (!row) return res.status(404).json({ error: 'not_found' });
+    if (!row.gmail_attachment_id || !row.gmail_message_id || !row.email_account_id) {
+      return res.status(409).json({ error: 'attachment_not_fetchable' });
+    }
+    const refreshToken = await emailAccounts.getDecryptedRefreshToken(pool, row.email_account_id);
+    if (!refreshToken) return res.status(500).json({ error: 'account_missing_token' });
+    const accessToken = await google.refreshAccessToken(refreshToken);
+    const att = await google.attachmentGet({
+      accessToken, messageId: row.gmail_message_id, attachmentId: row.gmail_attachment_id,
+    });
+    const buf = Buffer.from(String(att.data || '').replace(/-/g, '+').replace(/_/g, '/'), 'base64');
+    const safeName = (row.filename || 'attachment').replace(/["\r\n]/g, '_');
+    res.setHeader('Content-Type', row.mime_type || 'application/octet-stream');
+    res.setHeader('Content-Disposition', `attachment; filename="${safeName}"`);
+    res.send(buf);
+  } catch (e) {
+    console.error('[attachment] download failed:', e.message);
+    res.status(502).json({ error: 'download_failed' });
+  }
 });
 
 const PORT = process.env.PORT || 3000;

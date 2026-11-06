@@ -82,6 +82,17 @@ export interface Message {
   body_visible?: string;
   body_quoted?: string;
   has_quoted?: boolean;
+  attachments?: MessageAttachment[];
+}
+
+/** Attachment metadata (bytes fetched on demand via the download proxy). */
+export interface MessageAttachment {
+  id: string;
+  message_id: string;
+  filename: string | null;
+  mime_type: string | null;
+  size_bytes: number | null;
+  direction: string | null;
 }
 
 /** An internal note on a conversation (not emailed). */

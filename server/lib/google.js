@@ -124,8 +124,12 @@ function encodeHeaderWord(value) {
  * Threading: pass inReplyTo/references (the prior message's Message-ID) on
  * follow-ups so Gmail (and the recipient's client) keep everything in one thread.
  * Returns { raw, messageId } — messageId is the generated RFC822 Message-ID we persist.
+ *
+ * attachments (optional): [{ filename, mimeType, dataBase64 }]. When present the
+ * message is wrapped in multipart/mixed: the text/alternative body is the first
+ * part, each file a following base64 part with Content-Disposition: attachment.
  */
-function buildMime({ fromEmail, fromName, toEmail, subject, bodyText, bodyHtml, inReplyTo, references }) {
+function buildMime({ fromEmail, fromName, toEmail, subject, bodyText, bodyHtml, inReplyTo, references, attachments }) {
   const domain = (fromEmail.split('@')[1] || 'mail.local').trim();
   const messageId = `<${Date.now()}.${Math.random().toString(36).slice(2)}@${domain}>`;
   const fromHeader = fromName ? `${encodeHeaderWord(fromName)} <${fromEmail}>` : fromEmail;
@@ -140,24 +144,52 @@ function buildMime({ fromEmail, fromName, toEmail, subject, bodyText, bodyHtml, 
   if (inReplyTo) headers.push(`In-Reply-To: ${inReplyTo}`);
   if (references) headers.push(`References: ${references}`);
 
-  let body;
+  // The body part: its own Content-Type header line(s) + content. Nested inside
+  // multipart/mixed when there are attachments, else inlined at the top level.
+  let bodyTypeLines;
+  let bodyContent;
   if (bodyHtml) {
-    const boundary = `b_${Math.random().toString(36).slice(2)}`;
-    headers.push(`Content-Type: multipart/alternative; boundary="${boundary}"`);
-    body =
-      `--${boundary}\r\n` +
+    const alt = `b_${Math.random().toString(36).slice(2)}`;
+    bodyTypeLines = [`Content-Type: multipart/alternative; boundary="${alt}"`];
+    bodyContent =
+      `--${alt}\r\n` +
       'Content-Type: text/plain; charset="UTF-8"\r\n' +
       'Content-Transfer-Encoding: 8bit\r\n\r\n' +
       `${bodyText || ''}\r\n\r\n` +
-      `--${boundary}\r\n` +
+      `--${alt}\r\n` +
       'Content-Type: text/html; charset="UTF-8"\r\n' +
       'Content-Transfer-Encoding: 8bit\r\n\r\n' +
       `${bodyHtml}\r\n\r\n` +
-      `--${boundary}--`;
+      `--${alt}--`;
   } else {
-    headers.push('Content-Type: text/plain; charset="UTF-8"');
-    headers.push('Content-Transfer-Encoding: 8bit');
-    body = bodyText || '';
+    bodyTypeLines = ['Content-Type: text/plain; charset="UTF-8"', 'Content-Transfer-Encoding: 8bit'];
+    bodyContent = bodyText || '';
+  }
+
+  const atts = Array.isArray(attachments) ? attachments.filter((a) => a && a.dataBase64) : [];
+
+  let body;
+  if (atts.length === 0) {
+    headers.push(...bodyTypeLines);
+    body = bodyContent;
+  } else {
+    const mix = `mix_${Math.random().toString(36).slice(2)}`;
+    headers.push(`Content-Type: multipart/mixed; boundary="${mix}"`);
+    let parts = `--${mix}\r\n${bodyTypeLines.join('\r\n')}\r\n\r\n${bodyContent}\r\n`;
+    for (const a of atts) {
+      const name = (a.filename || 'attachment').replace(/["\r\n]/g, '_');
+      const mime = a.mimeType || 'application/octet-stream';
+      // Re-wrap base64 at 76 chars (RFC 2045).
+      const wrapped = String(a.dataBase64).replace(/\s+/g, '').replace(/.{76}/g, '$&\r\n');
+      parts +=
+        `--${mix}\r\n` +
+        `Content-Type: ${mime}; name="${encodeHeaderWord(name)}"\r\n` +
+        'Content-Transfer-Encoding: base64\r\n' +
+        `Content-Disposition: attachment; filename="${encodeHeaderWord(name)}"\r\n\r\n` +
+        `${wrapped}\r\n`;
+    }
+    parts += `--${mix}--`;
+    body = parts;
   }
 
   const mime = `${headers.join('\r\n')}\r\n\r\n${body}`;
@@ -187,6 +219,14 @@ function messageGet({ accessToken, id }) {
   return gapi(accessToken, `/messages/${encodeURIComponent(id)}`, { query: { format: 'full' } });
 }
 
+/** Fetch one attachment's bytes (base64url in `data`). */
+function attachmentGet({ accessToken, messageId, attachmentId }) {
+  return gapi(
+    accessToken,
+    `/messages/${encodeURIComponent(messageId)}/attachments/${encodeURIComponent(attachmentId)}`,
+  );
+}
+
 // ---- Parsing helpers for inbound messages ----
 
 function headerValue(payload, name) {
@@ -197,6 +237,29 @@ function headerValue(payload, name) {
 function decodeB64Url(data) {
   if (!data) return '';
   return Buffer.from(data.replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8');
+}
+
+/**
+ * Walk the MIME tree and collect attachment parts (anything with a filename and
+ * an attachmentId). Returns [{ filename, mimeType, size, attachmentId }].
+ */
+function extractAttachments(payload) {
+  const out = [];
+  function walk(part) {
+    if (!part) return;
+    const hasId = part.body && part.body.attachmentId;
+    if (part.filename && hasId) {
+      out.push({
+        filename: part.filename,
+        mimeType: part.mimeType || 'application/octet-stream',
+        size: part.body.size || null,
+        attachmentId: part.body.attachmentId,
+      });
+    }
+    (part.parts || []).forEach(walk);
+  }
+  walk(payload);
+  return out;
 }
 
 /** Walk the MIME tree and pull text/plain + text/html bodies. */
@@ -251,7 +314,9 @@ module.exports = {
   gmailSend,
   historyList,
   messageGet,
+  attachmentGet,
   parseMessage,
+  extractAttachments,
   // exposed for tests
   _internal: { headerValue, extractBodies, decodeB64Url },
 };

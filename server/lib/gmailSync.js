@@ -18,6 +18,7 @@ const google = require('./google');
 const emailAccounts = require('./emailAccounts');
 const conversations = require('./conversations');
 const messages = require('./messages');
+const messageAttachments = require('./messageAttachments');
 
 const POLL_MS = Number(process.env.INBOUND_POLL_MS || 90_000);
 
@@ -92,9 +93,10 @@ async function syncAccount(pool, accountId) {
   for (const id of added.ids) {
     if (await messages.existsByGmailId(pool, id)) continue;
     let parsed;
+    let rawMsg;
     try {
-      const raw = await google.messageGet({ accessToken, id });
-      parsed = google.parseMessage(raw);
+      rawMsg = await google.messageGet({ accessToken, id });
+      parsed = google.parseMessage(rawMsg);
     } catch (e) {
       console.error(`[gmailSync] message get ${id} failed: ${e.message}`);
       continue;
@@ -132,6 +134,22 @@ async function syncAccount(pool, accountId) {
     });
     if (!inserted) continue;
     stored++;
+
+    // Store attachment metadata (bytes fetched on demand via the proxy). No
+    // size cap on inbound.
+    try {
+      const atts = google.extractAttachments(rawMsg.payload || {});
+      for (const a of atts) {
+        await messageAttachments.insert(pool, {
+          messageId: inserted.id,
+          filename: a.filename,
+          mimeType: a.mimeType,
+          sizeBytes: a.size,
+          gmailAttachmentId: a.attachmentId,
+          direction,
+        });
+      }
+    } catch (e) { console.error(`[gmailSync] attachment store failed for ${id}: ${e.message}`); }
 
     if (direction === 'inbound') {
       // A real reply: route it to the inbox (unread + engaged, clear snooze).

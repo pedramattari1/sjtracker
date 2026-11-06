@@ -172,12 +172,19 @@ export async function fetchMessages(
   return (await res.json()) as Message[];
 }
 
+export interface SendAttachment {
+  filename: string;
+  mimeType: string;
+  dataBase64: string;
+}
+
 export interface SendMessageInput {
   conversationId?: string;
   prospectId?: string;
   toEmail?: string;
   subject: string;
   bodyText: string;
+  attachments?: SendAttachment[];
 }
 
 export async function sendMessage(
@@ -268,6 +275,27 @@ export async function deleteNote(
     { method: "DELETE", headers: await authHeaders(getToken) },
   );
   if (!res.ok) throw new Error(`delete note failed: ${res.status}`);
+}
+
+/** Download an attachment through the Clerk-gated proxy (token-fetch -> blob). */
+export async function downloadAttachment(
+  getToken: TokenGetter,
+  attachmentId: string,
+  filename: string,
+): Promise<void> {
+  const res = await fetch(`${BASE}/api/attachments/${encodeURIComponent(attachmentId)}`, {
+    headers: await authHeaders(getToken),
+  });
+  if (!res.ok) throw new Error(`download failed: ${res.status}`);
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename || "attachment";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
 }
 
 export async function fetchEvents(
