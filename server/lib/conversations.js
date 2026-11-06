@@ -95,16 +95,55 @@ async function markInboundReply(pool, id, receivedAtIso) {
   );
 }
 
+/** Set the conversation status. Returns { prev, next } for event logging. */
+async function setStatus(pool, id, status) {
+  const cur = await pool.query('SELECT status FROM conversations WHERE id = $1', [id]);
+  if (cur.rowCount === 0) return null;
+  const prev = cur.rows[0].status;
+  await pool.query('UPDATE conversations SET status = $2 WHERE id = $1', [id, status]);
+  return { prev, next: status };
+}
+
+/** Clear the unread flag (thread opened / read). */
+async function markRead(pool, id) {
+  await pool.query('UPDATE conversations SET unread = false WHERE id = $1', [id]);
+}
+
 async function listConversations(pool) {
   const { rows } = await pool.query(
-    `SELECT c.*, a.email AS account_email, p.data->>'fname' AS prospect_fname,
+    `SELECT c.*, a.email AS account_email,
+            p.data->>'fname' AS prospect_fname,
+            p.data->>'lname' AS prospect_lname,
+            p.data->>'email' AS prospect_email,
+            m.snippet AS last_snippet,
+            m.direction AS last_direction
+       FROM conversations c
+       LEFT JOIN email_accounts a ON a.id = c.email_account_id
+       LEFT JOIN prospects p ON p.id = c.prospect_id
+       LEFT JOIN LATERAL (
+         SELECT snippet, direction FROM messages
+          WHERE conversation_id = c.id
+          ORDER BY created_at DESC LIMIT 1
+       ) m ON true
+      ORDER BY c.last_message_at DESC NULLS LAST, c.created_at DESC`,
+  );
+  return rows;
+}
+
+/** One conversation with joined prospect + account fields (thread header). */
+async function getWithProspect(pool, id) {
+  const { rows } = await pool.query(
+    `SELECT c.*, a.email AS account_email,
+            p.data->>'fname' AS prospect_fname,
+            p.data->>'lname' AS prospect_lname,
             p.data->>'email' AS prospect_email
        FROM conversations c
        LEFT JOIN email_accounts a ON a.id = c.email_account_id
        LEFT JOIN prospects p ON p.id = c.prospect_id
-      ORDER BY c.last_message_at DESC NULLS LAST, c.created_at DESC`,
+      WHERE c.id = $1`,
+    [id],
   );
-  return rows;
+  return rows[0] || null;
 }
 
 module.exports = {
@@ -115,5 +154,8 @@ module.exports = {
   setThreadId,
   touchOutbound,
   markInboundReply,
+  setStatus,
+  markRead,
   listConversations,
+  getWithProspect,
 };

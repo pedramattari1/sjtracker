@@ -55,7 +55,10 @@ export interface Conversation {
   created_at: string;
   account_email: string | null;
   prospect_fname: string | null;
+  prospect_lname: string | null;
   prospect_email: string | null;
+  last_snippet: string | null;
+  last_direction: "outbound" | "inbound" | null;
 }
 
 /** A stored email in a conversation. */
@@ -75,4 +78,40 @@ export interface Message {
   sent_at: string | null;
   received_at: string | null;
   created_at: string;
+  // Added by GET /api/conversations/:id/messages (server-side quoted strip).
+  body_visible?: string;
+  body_quoted?: string;
+  has_quoted?: boolean;
 }
+
+/** An internal note on a conversation (not emailed). */
+export interface ConversationNote {
+  id: string;
+  conversation_id: string;
+  author_id: string | null;
+  body: string;
+  created_at: string;
+}
+
+/** An activity-timeline event (status change, note added, …). */
+export interface ConversationEvent {
+  id: string;
+  conversation_id: string;
+  type: string; // status | tag | snooze | note | system
+  detail: string | null;
+  actor_id: string | null;
+  created_at: string;
+}
+
+/** Conversation statuses (separate from the prospect's own status/stage). */
+export type ConversationStatus =
+  | "new"
+  | "contacted"
+  | "engaged"
+  | "interested"
+  | "future"
+  | "not_interested"
+  | "toured"
+  | "leased"
+  | "lost"
+  | "dormant";

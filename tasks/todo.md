@@ -1,6 +1,51 @@
-# Nurture & Two-Way Messaging — Phase 1 (Email plumbing, one account)
+# Nurture & Two-Way Messaging
 
-Spec: `docs/nurture-spec.md` §10 Phase 1. Build-on-these facts in the spec header.
+Spec: `docs/nurture-spec.md`. Build-on-these facts in the spec header.
+
+---
+
+# Phase 2 — Conversations inbox (core)  ✅ built, awaiting review
+
+Scope (§10 Phase 2) + three fold-ins. Attachments **deferred to 2b** (approved).
+Snooze, reply-tag *setting*, prospect-facts sidebar, snippets, nav badge, bulk
+actions stay **Phase 3** (we display tag/snooze state now, don't set them).
+
+## Checklist
+- [x] `server/lib/quoted.js` — server-side quoted-history split (`{visible, quoted}`) + `test/quoted.test.js` (ALL PASS)
+- [x] `server/lib/conversationNotes.js` — `conversation_notes` table + CRUD
+- [x] `server/lib/conversationEvents.js` — `conversation_events` activity log
+- [x] `server/lib/conversations.js` — `setStatus`, `markRead`, `getWithProspect`; list enriched w/ last snippet + prospect name
+- [x] `server/server.js` — ensureTable wiring; routes: `PATCH /api/conversations/:id` (status + mark-read, logs event), notes CRUD, `GET …/events`, messages augmented w/ `body_visible`/`body_quoted`; `send` now accepts `conversationId` (reply into thread)
+- [x] `web/src/lib/types.ts` — `ConversationNote`, `ConversationEvent`, `ConversationStatus`; `Message` + visible/quoted; `Conversation` + lname/snippet
+- [x] `web/src/lib/api.ts` — status/mark-read, notes CRUD, events, `sendMessage(conversationId)`
+- [x] `web/src/lib/time.ts` — **local-timezone** formatters (relative + absolute)
+- [x] `web/src/lib/convoBadges.ts` — conversation status + tag pills/options
+- [x] `web/src/components/Avatar.tsx` — initials avatar
+- [x] `web/src/components/ConversationList.tsx` — name + snippet + avatar + unread/status/tag chips + filters (All/Unread/Snoozed/Engaged/status/tag) + search
+- [x] `web/src/components/ThreadView.tsx` — header + status dropdown + prospect link; bubbles (outbound right/inbound left, **local** timestamps, **quoted collapsed** w/ expander); reply composer (thread's account); Notes tab; Activity timeline
+- [x] `web/src/pages/Messaging.tsx` — responsive two-pane shell (desktop split; mobile list→thread w/ back); account header + Connect + Sync now
+
+## Fold-ins (all in)
+- [x] Quoted reply history stripped server-side; bubble shows new content only, "Show quoted text" reveals the rest.
+- [x] All timestamps render in the viewer's local timezone (never UTC).
+- [x] Thread list shows name + snippet + avatar + unread/status/tag chips + §6 filters + search (not raw subject).
+
+## Review (results)
+- `node --check` all new/edited server files — OK
+- `node test/quoted.test.js` — **ALL PASS**; `cryptoBox` still PASS
+- web `tsc --noEmit` clean; `eslint src` clean; `vite build` succeeds (1650 modules)
+- Not run (needs live Clerk + API + DB — you drive): in-app render of the two-pane, real reply round-trip, status/notes/timeline against Postgres.
+- Guardrails: all new tables additive (`conversation_notes`, `conversation_events`); `prospects` untouched; replies stay thread-bound to the conversation's account (Gmail-only); dedupe/threading preserved; report feature + its test untouched.
+
+### Deferred
+- **Phase 2b (attachments):** inbound metadata + Gmail bytes proxy + outbound multipart MIME. When built, raise the JSON body limit **on the send route only** (`express.json({limit:'30mb'})`), not globally. Proposed separately.
+- Phase 3: snooze, set reply tags, prospect-facts right sidebar, snippets, nav unread badge, bulk actions.
+
+---
+
+# Phase 1 — Email plumbing (one account)  ✅ shipped (live test passed)
+
+Spec: §10 Phase 1.
 
 ## Plan (approved, with 3 adjustments)
 Adjustments baked in:

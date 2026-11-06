@@ -5,6 +5,8 @@ import type {
   EmailAccount,
   Conversation,
   Message,
+  ConversationNote,
+  ConversationEvent,
 } from "@/lib/types";
 
 const BASE = import.meta.env.VITE_API_BASE_URL;
@@ -171,6 +173,7 @@ export async function fetchMessages(
 }
 
 export interface SendMessageInput {
+  conversationId?: string;
   prospectId?: string;
   toEmail?: string;
   subject: string;
@@ -200,6 +203,83 @@ export async function runSync(getToken: TokenGetter): Promise<void> {
     headers: await authHeaders(getToken),
   });
   if (!res.ok) throw new Error(`sync failed: ${res.status}`);
+}
+
+/** Change a conversation's status (logs an activity event server-side). */
+export async function setConversationStatus(
+  getToken: TokenGetter,
+  id: string,
+  status: string,
+): Promise<Conversation> {
+  const res = await fetch(`${BASE}/api/conversations/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    headers: await authHeaders(getToken),
+    body: JSON.stringify({ status }),
+  });
+  if (!res.ok) throw new Error(`status update failed: ${res.status}`);
+  return (await res.json()) as Conversation;
+}
+
+/** Clear a conversation's unread flag (thread opened). */
+export async function markConversationRead(
+  getToken: TokenGetter,
+  id: string,
+): Promise<void> {
+  const res = await fetch(`${BASE}/api/conversations/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    headers: await authHeaders(getToken),
+    body: JSON.stringify({ read: true }),
+  });
+  if (!res.ok) throw new Error(`mark-read failed: ${res.status}`);
+}
+
+export async function fetchNotes(
+  getToken: TokenGetter,
+  conversationId: string,
+): Promise<ConversationNote[]> {
+  const res = await fetch(
+    `${BASE}/api/conversations/${encodeURIComponent(conversationId)}/notes`,
+    { headers: await authHeaders(getToken) },
+  );
+  if (!res.ok) throw new Error(`GET notes failed: ${res.status}`);
+  return (await res.json()) as ConversationNote[];
+}
+
+export async function addNote(
+  getToken: TokenGetter,
+  conversationId: string,
+  body: string,
+): Promise<ConversationNote> {
+  const res = await fetch(
+    `${BASE}/api/conversations/${encodeURIComponent(conversationId)}/notes`,
+    { method: "POST", headers: await authHeaders(getToken), body: JSON.stringify({ body }) },
+  );
+  if (!res.ok) throw new Error(`add note failed: ${res.status}`);
+  return (await res.json()) as ConversationNote;
+}
+
+export async function deleteNote(
+  getToken: TokenGetter,
+  conversationId: string,
+  noteId: string,
+): Promise<void> {
+  const res = await fetch(
+    `${BASE}/api/conversations/${encodeURIComponent(conversationId)}/notes/${encodeURIComponent(noteId)}`,
+    { method: "DELETE", headers: await authHeaders(getToken) },
+  );
+  if (!res.ok) throw new Error(`delete note failed: ${res.status}`);
+}
+
+export async function fetchEvents(
+  getToken: TokenGetter,
+  conversationId: string,
+): Promise<ConversationEvent[]> {
+  const res = await fetch(
+    `${BASE}/api/conversations/${encodeURIComponent(conversationId)}/events`,
+    { headers: await authHeaders(getToken) },
+  );
+  if (!res.ok) throw new Error(`GET events failed: ${res.status}`);
+  return (await res.json()) as ConversationEvent[];
 }
 
 /** Build a full ProspectInput from a possibly-partial record (fills blanks). */

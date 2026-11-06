@@ -23,6 +23,9 @@ const emailAccounts = require('./lib/emailAccounts');
 const conversations = require('./lib/conversations');
 const messages = require('./lib/messages');
 const gmailSync = require('./lib/gmailSync');
+const quoted = require('./lib/quoted');
+const conversationNotes = require('./lib/conversationNotes');
+const conversationEvents = require('./lib/conversationEvents');
 
 const app = express();
 app.use(cors());               // CORS so the Vercel frontend can call this
@@ -122,6 +125,8 @@ async function initDb() {
   await emailAccounts.ensureTable(pool);
   await conversations.ensureTable(pool);
   await messages.ensureTable(pool);
+  await conversationNotes.ensureTable(pool);   // Phase 2
+  await conversationEvents.ensureTable(pool);  // Phase 2
   // Additive index to match inbound/prospect lookups by email (spec §4).
   await pool.query(
     "CREATE INDEX IF NOT EXISTS prospects_email_idx ON prospects ((lower(data->>'email')));",
@@ -393,7 +398,70 @@ app.get('/api/conversations', auth, async (_req, res) => {
 });
 
 app.get('/api/conversations/:id/messages', auth, async (req, res) => {
-  try { res.json(await messages.listByConversation(pool, req.params.id)); }
+  try {
+    const rows = await messages.listByConversation(pool, req.params.id);
+    // Server-side quoted-history strip (Phase 2): the bubble shows body_visible
+    // and reveals body_quoted behind a "show quoted text" expander. Raw
+    // body_text is left untouched for anyone who needs the full source.
+    const withSplit = rows.map((m) => {
+      const s = quoted.splitQuoted(m.body_text || '', m.body_html || '');
+      return { ...m, body_visible: s.visible, body_quoted: s.quoted, has_quoted: s.hasQuoted };
+    });
+    res.json(withSplit);
+  } catch (e) { console.error(e); res.status(500).json({ error: 'read_failed' }); }
+});
+
+// Update a conversation (Phase 2: status; mark-read). Tag/snooze are Phase 3.
+app.patch('/api/conversations/:id', auth, async (req, res) => {
+  try {
+    const { userId } = getAuth(req);
+    const id = req.params.id;
+    const body = req.body || {};
+    let changed = false;
+
+    if (typeof body.status === 'string' && body.status.trim()) {
+      const result = await conversations.setStatus(pool, id, body.status.trim());
+      if (!result) return res.status(404).json({ error: 'not_found' });
+      if (result.prev !== result.next) {
+        await conversationEvents.log(pool, {
+          conversationId: id, type: 'status',
+          detail: `${result.prev || '—'} → ${result.next}`, actorId: userId,
+        });
+      }
+      changed = true;
+    }
+    if (body.read === true) { await conversations.markRead(pool, id); changed = true; }
+
+    if (!changed) return res.status(400).json({ error: 'nothing_to_update' });
+    res.json(await conversations.getWithProspect(pool, id));
+  } catch (e) { console.error('[conversations] patch failed:', e.message); res.status(500).json({ error: 'update_failed' }); }
+});
+
+// Conversation notes (internal; never emailed).
+app.get('/api/conversations/:id/notes', auth, async (req, res) => {
+  try { res.json(await conversationNotes.list(pool, req.params.id)); }
+  catch (e) { console.error(e); res.status(500).json({ error: 'read_failed' }); }
+});
+
+app.post('/api/conversations/:id/notes', auth, async (req, res) => {
+  try {
+    const { userId } = getAuth(req);
+    const body = (req.body && req.body.body ? String(req.body.body) : '').trim();
+    if (!body) return res.status(400).json({ error: 'empty_note' });
+    const note = await conversationNotes.add(pool, { conversationId: req.params.id, authorId: userId, body });
+    await conversationEvents.log(pool, { conversationId: req.params.id, type: 'note', detail: 'note added', actorId: userId });
+    res.json(note);
+  } catch (e) { console.error(e); res.status(500).json({ error: 'create_failed' }); }
+});
+
+app.delete('/api/conversations/:id/notes/:noteId', auth, async (req, res) => {
+  try { await conversationNotes.remove(pool, req.params.noteId); res.json({ ok: true }); }
+  catch (e) { console.error(e); res.status(500).json({ error: 'delete_failed' }); }
+});
+
+// Activity events for the timeline.
+app.get('/api/conversations/:id/events', auth, async (req, res) => {
+  try { res.json(await conversationEvents.listByConversation(pool, req.params.id)); }
   catch (e) { console.error(e); res.status(500).json({ error: 'read_failed' }); }
 });
 
@@ -401,24 +469,54 @@ app.get('/api/conversations/:id/messages', auth, async (req, res) => {
  * Send an in-app message as a real Gmail email (spec §2.3). Thread-bound: if the
  * prospect already has a conversation, reuse its account + Gmail thread and set
  * threading headers; otherwise start a new thread from the default account.
- * Body: { prospectId?, toEmail?, subject, bodyText, bodyHtml? }
+ * Body: { conversationId?, prospectId?, toEmail?, subject, bodyText, bodyHtml? }
+ * When conversationId is given (replying from the inbox) the thread's bound
+ * account is used and the recipient defaults to the latest inbound sender.
  */
 app.post('/api/messages/send', auth, async (req, res) => {
   try {
-    const { prospectId, subject, bodyText, bodyHtml } = req.body || {};
+    const { conversationId, prospectId, subject, bodyText, bodyHtml } = req.body || {};
     let toEmail = (req.body && req.body.toEmail ? String(req.body.toEmail) : '').trim();
 
+    let convo = null;
+    let account = null;
+
+    // Replying into an existing thread: bind to that conversation's account and
+    // default the recipient to whoever last wrote in (the prospect).
+    if (conversationId) {
+      convo = await conversations.getById(pool, conversationId);
+      if (!convo) return res.status(404).json({ error: 'conversation_not_found' });
+      account = await emailAccounts.getById(pool, convo.email_account_id);
+      if (!toEmail) {
+        const inbound = await pool.query(
+          `SELECT from_email FROM messages
+            WHERE conversation_id = $1 AND direction = 'inbound' AND from_email IS NOT NULL
+            ORDER BY created_at DESC LIMIT 1`,
+          [conversationId],
+        );
+        toEmail = (inbound.rows[0] && inbound.rows[0].from_email ? String(inbound.rows[0].from_email) : '').trim();
+        // Fall back to the bound prospect's email.
+        if ((!toEmail || !toEmail.includes('@')) && convo.prospect_id) {
+          const r = await pool.query("SELECT data->>'email' AS email FROM prospects WHERE id = $1", [convo.prospect_id]);
+          toEmail = (r.rows[0] && r.rows[0].email ? String(r.rows[0].email) : '').trim();
+        }
+      }
+    }
+
     // Resolve the recipient from the prospect when not given explicitly.
-    if (prospectId && !toEmail) {
+    if (!toEmail && prospectId) {
       const r = await pool.query("SELECT data->>'email' AS email FROM prospects WHERE id = $1", [prospectId]);
       toEmail = (r.rows[0] && r.rows[0].email ? String(r.rows[0].email) : '').trim();
     }
-    if (!toEmail || !toEmail.includes('@')) return res.status(400).json({ error: 'invalid_recipient' });
+    // A plain "from_email" can be "Name <addr>" — extract the address for validation.
+    const addrMatch = toEmail.match(/<([^>]+)>/);
+    const toAddr = (addrMatch ? addrMatch[1] : toEmail).trim();
+    if (!toAddr || !toAddr.includes('@')) return res.status(400).json({ error: 'invalid_recipient' });
+    toEmail = toAddr;
 
-    // Pick the sending account: the prospect's existing thread account, else default.
-    let convo = null;
-    let account = null;
-    if (prospectId) {
+    // Pick the sending account: thread's account (above), else the prospect's
+    // existing thread account, else default.
+    if (!convo && prospectId) {
       const existing = await pool.query(
         'SELECT * FROM conversations WHERE prospect_id = $1 ORDER BY created_at ASC LIMIT 1', [prospectId],
       );
