@@ -60,3 +60,15 @@ export function tagCls(v: string): string {
 export function tagLabel(v: string): string {
   return TAG_OPTIONS.find((o) => o.value === v)?.label ?? v;
 }
+
+// Move-in timeframe (spec §3.3). next_year/later park the prospect for re-engage.
+export const TIMEFRAME_OPTIONS: { value: string; label: string }[] = [
+  { value: "", label: "Unknown" },
+  { value: "this_year", label: "This year" },
+  { value: "next_year", label: "Next year" },
+  { value: "later", label: "Later" },
+];
+
+export function timeframeLabel(v: string | null | undefined): string {
+  return TIMEFRAME_OPTIONS.find((o) => o.value === (v ?? ""))?.label ?? "Unknown";
+}

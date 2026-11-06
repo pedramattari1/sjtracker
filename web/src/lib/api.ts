@@ -7,6 +7,8 @@ import type {
   Message,
   ConversationNote,
   ConversationEvent,
+  ProspectCrm,
+  Snippet,
 } from "@/lib/types";
 
 const BASE = import.meta.env.VITE_API_BASE_URL;
@@ -275,6 +277,114 @@ export async function deleteNote(
     { method: "DELETE", headers: await authHeaders(getToken) },
   );
   if (!res.ok) throw new Error(`delete note failed: ${res.status}`);
+}
+
+/** Set or clear (null) a conversation's reply tag. */
+export async function setConversationTag(
+  getToken: TokenGetter,
+  id: string,
+  tag: string | null,
+): Promise<Conversation> {
+  const res = await fetch(`${BASE}/api/conversations/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    headers: await authHeaders(getToken),
+    body: JSON.stringify({ tag }),
+  });
+  if (!res.ok) throw new Error(`tag update failed: ${res.status}`);
+  return (await res.json()) as Conversation;
+}
+
+/** Set or clear (null) a conversation's snooze. */
+export async function setConversationSnooze(
+  getToken: TokenGetter,
+  id: string,
+  snoozedUntil: string | null,
+  note?: string,
+): Promise<Conversation> {
+  const res = await fetch(`${BASE}/api/conversations/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    headers: await authHeaders(getToken),
+    body: JSON.stringify({ snoozed_until: snoozedUntil, snooze_note: note ?? null }),
+  });
+  if (!res.ok) throw new Error(`snooze update failed: ${res.status}`);
+  return (await res.json()) as Conversation;
+}
+
+export type BulkAction = "status" | "tag" | "snooze" | "clear_snooze";
+
+/** Apply one action to many conversations. */
+export async function bulkConversations(
+  getToken: TokenGetter,
+  ids: string[],
+  action: BulkAction,
+  value?: string | null,
+): Promise<number> {
+  const res = await fetch(`${BASE}/api/conversations/bulk`, {
+    method: "POST",
+    headers: await authHeaders(getToken),
+    body: JSON.stringify({ ids, action, value: value ?? null }),
+  });
+  if (!res.ok) throw new Error(`bulk action failed: ${res.status}`);
+  const { updated } = (await res.json()) as { updated: number };
+  return updated;
+}
+
+export async function fetchUnreadCount(getToken: TokenGetter): Promise<number> {
+  const res = await fetch(`${BASE}/api/conversations/unread-count`, {
+    headers: await authHeaders(getToken),
+  });
+  if (!res.ok) throw new Error(`unread count failed: ${res.status}`);
+  const { count } = (await res.json()) as { count: number };
+  return count;
+}
+
+export async function fetchProspectCrm(getToken: TokenGetter, prospectId: string): Promise<ProspectCrm> {
+  const res = await fetch(`${BASE}/api/prospects/${encodeURIComponent(prospectId)}/crm`, {
+    headers: await authHeaders(getToken),
+  });
+  if (!res.ok) throw new Error(`GET crm failed: ${res.status}`);
+  return (await res.json()) as ProspectCrm;
+}
+
+export async function saveProspectCrm(
+  getToken: TokenGetter,
+  prospectId: string,
+  crm: ProspectCrm,
+): Promise<ProspectCrm> {
+  const res = await fetch(`${BASE}/api/prospects/${encodeURIComponent(prospectId)}/crm`, {
+    method: "PUT",
+    headers: await authHeaders(getToken),
+    body: JSON.stringify(crm),
+  });
+  if (!res.ok) throw new Error(`PUT crm failed: ${res.status}`);
+  return (await res.json()) as ProspectCrm;
+}
+
+export async function fetchSnippets(getToken: TokenGetter): Promise<Snippet[]> {
+  const res = await fetch(`${BASE}/api/snippets`, { headers: await authHeaders(getToken) });
+  if (!res.ok) throw new Error(`GET snippets failed: ${res.status}`);
+  return (await res.json()) as Snippet[];
+}
+
+export async function addSnippet(
+  getToken: TokenGetter,
+  snippet: { name: string; body_text: string },
+): Promise<Snippet> {
+  const res = await fetch(`${BASE}/api/snippets`, {
+    method: "POST",
+    headers: await authHeaders(getToken),
+    body: JSON.stringify(snippet),
+  });
+  if (!res.ok) throw new Error(`add snippet failed: ${res.status}`);
+  return (await res.json()) as Snippet;
+}
+
+export async function deleteSnippet(getToken: TokenGetter, id: string): Promise<void> {
+  const res = await fetch(`${BASE}/api/snippets/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+    headers: await authHeaders(getToken),
+  });
+  if (!res.ok) throw new Error(`delete snippet failed: ${res.status}`);
 }
 
 /** Download an attachment through the Clerk-gated proxy (token-fetch -> blob). */

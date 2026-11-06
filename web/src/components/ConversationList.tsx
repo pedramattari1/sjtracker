@@ -26,10 +26,14 @@ export function ConversationList({
   conversations,
   selectedId,
   onSelect,
+  selectedIds,
+  onToggleSelect,
 }: {
   conversations: Conversation[];
   selectedId: string | null;
   onSelect: (id: string) => void;
+  selectedIds: Set<string>;
+  onToggleSelect: (id: string) => void;
 }) {
   const [quick, setQuick] = useState<QuickFilter>("all");
   const [statusFilter, setStatusFilter] = useState("");
@@ -44,6 +48,9 @@ export function ConversationList({
   const visible = useMemo(() => {
     const q = search.trim().toLowerCase();
     return conversations.filter((c) => {
+      // Future-snoozed threads leave the active views until due; the Snoozed
+      // filter is where they live meanwhile (spec §3.4).
+      if (quick !== "snoozed" && isSnoozed(c)) return false;
       if (quick === "unread" && !c.unread) return false;
       if (quick === "snoozed" && !isSnoozed(c)) return false;
       if (quick === "engaged" && c.status !== "engaged") return false;
@@ -127,13 +134,19 @@ export function ConversationList({
             const snippet =
               (c.last_direction === "outbound" ? "You: " : "") + (c.last_snippet || "No messages yet");
             return (
-              <li key={c.id}>
+              <li key={c.id} className={cn("flex items-start border-b border-neutral-100", selectedId === c.id ? "bg-sky-50" : "hover:bg-neutral-50")}>
+                <label className="flex items-center py-3 pl-3" onClick={(e) => e.stopPropagation()}>
+                  <input
+                    type="checkbox"
+                    checked={selectedIds.has(c.id)}
+                    onChange={() => onToggleSelect(c.id)}
+                    className="h-4 w-4 rounded border-neutral-300"
+                    aria-label={`Select ${name}`}
+                  />
+                </label>
                 <button
                   onClick={() => onSelect(c.id)}
-                  className={cn(
-                    "flex w-full items-start gap-3 border-b border-neutral-100 px-3 py-3 text-left hover:bg-neutral-50",
-                    selectedId === c.id ? "bg-sky-50" : "",
-                  )}
+                  className="flex w-full items-start gap-3 px-3 py-3 text-left"
                 >
                   <Avatar name={name} seed={c.prospect_email || c.id} />
                   <span className="min-w-0 flex-1">

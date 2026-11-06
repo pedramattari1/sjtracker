@@ -1,7 +1,8 @@
-import type { ReactNode } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { NavLink } from "react-router-dom";
-import { UserButton, useClerk } from "@clerk/clerk-react";
+import { UserButton, useClerk, useAuth } from "@clerk/clerk-react";
 import { LayoutDashboard, Users, FileText, Mail, LogOut } from "lucide-react";
+import { fetchUnreadCount } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
 const NAV = [
@@ -13,6 +14,16 @@ const NAV = [
 
 export function AppShell({ children }: { children: ReactNode }) {
   const { signOut } = useClerk();
+  const { getToken } = useAuth();
+  const token = useCallback(() => getToken(), [getToken]);
+  const [unread, setUnread] = useState(0);
+
+  useEffect(() => {
+    const load = () => void fetchUnreadCount(token).then(setUnread).catch(() => {});
+    load();
+    const id = window.setInterval(load, 20000);
+    return () => window.clearInterval(id);
+  }, [token]);
   return (
     <div className="flex min-h-screen bg-neutral-50 text-neutral-900">
       <aside className="flex w-56 flex-col border-r border-neutral-200 bg-white">
@@ -35,7 +46,12 @@ export function AppShell({ children }: { children: ReactNode }) {
               }
             >
               <Icon className="h-4 w-4" />
-              {label}
+              <span className="flex-1">{label}</span>
+              {to === "/messaging" && unread > 0 ? (
+                <span className="inline-flex min-w-[1.25rem] items-center justify-center rounded-full bg-sky-500 px-1.5 text-[11px] font-semibold text-white">
+                  {unread}
+                </span>
+              ) : null}
             </NavLink>
           ))}
         </nav>

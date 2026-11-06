@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { ArrowLeft, ChevronDown, ChevronRight, Paperclip, Trash2, X, Download } from "lucide-react";
+import { ArrowLeft, ChevronDown, ChevronRight, Paperclip, Trash2, X, Download, PanelRight, FileText } from "lucide-react";
 import type {
   Conversation,
   Message,
   MessageAttachment,
   ConversationNote,
   ConversationEvent,
+  Snippet,
 } from "@/lib/types";
 import type { TokenGetter } from "@/lib/api";
 import {
@@ -17,11 +18,17 @@ import {
   fetchEvents,
   sendMessage,
   setConversationStatus,
+  setConversationTag,
+  setConversationSnooze,
   downloadAttachment,
+  fetchSnippets,
+  addSnippet,
+  deleteSnippet,
 } from "@/lib/api";
 import { Avatar } from "@/components/Avatar";
+import { SnoozeMenu } from "@/components/SnoozeMenu";
 import { fmtAbsolute, fmtRelative } from "@/lib/time";
-import { CONVO_STATUS_OPTIONS, convoStatusCls } from "@/lib/convoBadges";
+import { CONVO_STATUS_OPTIONS, TAG_OPTIONS, convoStatusCls, tagCls } from "@/lib/convoBadges";
 import { fileToBase64, formatBytes, MAX_ATTACH_BYTES, type PendingAttachment } from "@/lib/files";
 import { cn } from "@/lib/utils";
 
@@ -103,17 +110,24 @@ export function ThreadView({
   token,
   onBack,
   onChanged,
+  onToggleSidebar,
 }: {
   conversation: Conversation;
   token: TokenGetter;
   onBack?: () => void;
   onChanged: () => void;
+  onToggleSidebar?: () => void;
 }) {
   const [tab, setTab] = useState<Tab>("messages");
   const [messages, setMessages] = useState<Message[]>([]);
   const [notes, setNotes] = useState<ConversationNote[]>([]);
   const [events, setEvents] = useState<ConversationEvent[]>([]);
   const [status, setStatus] = useState(conversation.status);
+  const [tag, setTagState] = useState<string | null>(conversation.tag);
+  const [snippets, setSnippets] = useState<Snippet[]>([]);
+  const [snippetMenu, setSnippetMenu] = useState(false);
+  const [newSnippet, setNewSnippet] = useState(false);
+  const [snipName, setSnipName] = useState("");
   const [reply, setReply] = useState("");
   const [pending, setPending] = useState<PendingAttachment[]>([]);
   const [noteDraft, setNoteDraft] = useState("");
@@ -161,12 +175,47 @@ export function ThreadView({
 
   useEffect(() => {
     setStatus(conversation.status);
+    setTagState(conversation.tag);
     setTab("messages");
     setReply("");
     setPending([]);
     setError(null);
     void loadMessages().catch((e) => setError(e instanceof Error ? e.message : "Failed to load"));
-  }, [conversation.id, conversation.status, loadMessages]);
+  }, [conversation.id, conversation.status, conversation.tag, loadMessages]);
+
+  useEffect(() => { void fetchSnippets(token).then(setSnippets).catch(() => {}); }, [token]);
+
+  async function handleTag(next: string) {
+    const value = tag === next ? null : next;
+    setTagState(value);
+    try { await setConversationTag(token, conversation.id, value); onChanged(); }
+    catch { setTagState(conversation.tag); }
+  }
+
+  async function handleSnooze(iso: string | null) {
+    try { await setConversationSnooze(token, conversation.id, iso); onChanged(); }
+    catch (e) { setError(e instanceof Error ? e.message : "Snooze failed"); }
+  }
+
+  function insertSnippet(body: string) {
+    setReply((prev) => (prev ? `${prev}\n\n${body}` : body));
+    setSnippetMenu(false);
+  }
+
+  async function saveNewSnippet() {
+    if (!snipName.trim() || !reply.trim()) return;
+    try {
+      const s = await addSnippet(token, { name: snipName.trim(), body_text: reply });
+      setSnippets((prev) => [...prev, s].sort((a, b) => a.name.localeCompare(b.name)));
+      setSnipName("");
+      setNewSnippet(false);
+    } catch (e) { setError(e instanceof Error ? e.message : "Save snippet failed"); }
+  }
+
+  async function removeSnippet(id: string) {
+    try { await deleteSnippet(token, id); setSnippets((prev) => prev.filter((s) => s.id !== id)); }
+    catch { /* ignore */ }
+  }
 
   useEffect(() => {
     if (tab === "notes") void fetchNotes(token, conversation.id).then(setNotes).catch(() => {});
@@ -284,6 +333,31 @@ export function ThreadView({
             </select>
             <ChevronDown className="pointer-events-none absolute right-1.5 h-3.5 w-3.5 opacity-70" />
           </div>
+          {onToggleSidebar ? (
+            <button onClick={onToggleSidebar} className="rounded-md p-1.5 text-neutral-500 hover:bg-neutral-100" aria-label="Toggle details" title="Details">
+              <PanelRight className="h-4 w-4" />
+            </button>
+          ) : null}
+        </div>
+
+        {/* Quick tags + snooze */}
+        <div className="mt-2 flex flex-wrap items-center gap-1.5">
+          <span className="text-[10px] font-semibold uppercase tracking-wide text-neutral-400">Tag</span>
+          {TAG_OPTIONS.map((o) => (
+            <button
+              key={o.value}
+              onClick={() => void handleTag(o.value)}
+              className={cn(
+                "rounded-full px-2 py-0.5 text-[11px] font-semibold",
+                tag === o.value ? tagCls(o.value) : "bg-neutral-100 text-neutral-500 hover:bg-neutral-200",
+              )}
+            >
+              {o.label}
+            </button>
+          ))}
+          <div className="ml-auto">
+            <SnoozeMenu onPick={(iso) => void handleSnooze(iso)} onClear={() => void handleSnooze(null)} showClear align="right" />
+          </div>
         </div>
         <div className="mt-2 flex items-center justify-between text-[11px] text-neutral-400">
           <span>Sending from <span className="font-medium text-neutral-600">{conversation.account_email || "—"}</span></span>
@@ -396,6 +470,54 @@ export function ThreadView({
               >
                 <Paperclip className="h-4 w-4" /> Attach
               </button>
+              {/* Snippet insert / manage */}
+              <div className="relative">
+                <button
+                  type="button"
+                  onClick={() => setSnippetMenu((o) => !o)}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-neutral-300 px-2.5 py-2 text-sm font-medium text-neutral-600 hover:bg-neutral-50"
+                >
+                  <FileText className="h-4 w-4" /> Snippet
+                </button>
+                {snippetMenu ? (
+                  <div className="absolute bottom-full z-30 mb-1 w-64 rounded-lg border border-neutral-200 bg-white p-1 shadow-lg">
+                    {snippets.length === 0 ? (
+                      <p className="px-2 py-1.5 text-xs text-neutral-400">No snippets yet.</p>
+                    ) : (
+                      snippets.map((s) => (
+                        <div key={s.id} className="flex items-center gap-1">
+                          <button type="button" onClick={() => insertSnippet(s.body_text)} className="flex-1 rounded px-2 py-1.5 text-left text-xs hover:bg-neutral-100" title={s.body_text}>
+                            {s.name}
+                          </button>
+                          <button type="button" onClick={() => void removeSnippet(s.id)} className="rounded p-1 text-neutral-400 hover:text-red-600" aria-label={`Delete ${s.name}`}>
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      ))
+                    )}
+                    <div className="my-1 border-t border-neutral-100" />
+                    {newSnippet ? (
+                      <div className="px-2 py-1">
+                        <input
+                          value={snipName}
+                          onChange={(e) => setSnipName(e.target.value)}
+                          placeholder="Snippet name"
+                          className="mb-1 w-full rounded border border-neutral-300 px-1.5 py-1 text-xs"
+                        />
+                        <p className="mb-1 text-[10px] text-neutral-400">Saves the current reply text as the body.</p>
+                        <div className="flex gap-1">
+                          <button type="button" onClick={() => void saveNewSnippet()} disabled={!snipName.trim() || !reply.trim()} className="flex-1 rounded bg-neutral-900 px-2 py-1 text-xs font-medium text-white disabled:opacity-40">Save</button>
+                          <button type="button" onClick={() => setNewSnippet(false)} className="rounded border border-neutral-300 px-2 py-1 text-xs">Cancel</button>
+                        </div>
+                      </div>
+                    ) : (
+                      <button type="button" onClick={() => setNewSnippet(true)} className="block w-full rounded px-2 py-1.5 text-left text-xs text-sky-700 hover:bg-sky-50">
+                        ＋ New snippet from reply
+                      </button>
+                    )}
+                  </div>
+                ) : null}
+              </div>
               <span className={cn("text-[11px]", overCap ? "font-medium text-red-600" : "text-neutral-400")}>
                 {pending.length > 0 ? `${formatBytes(pendingTotal)} / 15 MB` : "Sends as a real email, in-thread."}
               </span>

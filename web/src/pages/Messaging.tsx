@@ -12,10 +12,14 @@ import {
   fetchConversations,
   markConversationRead,
   runSync,
+  bulkConversations,
+  type BulkAction,
 } from "@/lib/api";
 import type { EmailAccount, Conversation } from "@/lib/types";
 import { ConversationList } from "@/components/ConversationList";
 import { ThreadView } from "@/components/ThreadView";
+import { ProspectSidebar } from "@/components/ProspectSidebar";
+import { BulkActionBar } from "@/components/BulkActionBar";
 
 function connectBanner(): { ok: boolean; text: string } | null {
   const q = new URLSearchParams(window.location.search);
@@ -31,6 +35,8 @@ export function Messaging() {
   const [accounts, setAccounts] = useState<EmailAccount[]>([]);
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [showSidebar, setShowSidebar] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [syncing, setSyncing] = useState(false);
   const [banner] = useState(connectBanner);
@@ -78,6 +84,26 @@ export function Messaging() {
       setError(e instanceof Error ? e.message : "Sync failed");
     } finally {
       setSyncing(false);
+    }
+  }
+
+  function toggleSelect(id: string) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }
+
+  async function runBulk(action: BulkAction, value?: string | null) {
+    const ids = [...selectedIds];
+    if (ids.length === 0) return;
+    try {
+      await bulkConversations(token, ids, action, value);
+      setSelectedIds(new Set());
+      await loadConversations();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Bulk action failed");
     }
   }
 
@@ -133,16 +159,33 @@ export function Messaging() {
         <div className="flex flex-1 overflow-hidden rounded-xl border border-neutral-200 bg-white">
           {/* List pane — hidden on mobile once a thread is open */}
           <div className={`${selectedId ? "hidden md:flex" : "flex"} w-full flex-col border-r border-neutral-200 md:w-80 lg:w-96`}>
-            <ConversationList conversations={conversations} selectedId={selectedId} onSelect={handleSelect} />
+            {selectedIds.size > 0 ? (
+              <BulkActionBar
+                count={selectedIds.size}
+                onStatus={(s) => void runBulk("status", s)}
+                onTag={(t) => void runBulk("tag", t)}
+                onSnooze={(iso) => void runBulk("snooze", iso)}
+                onClearSnooze={() => void runBulk("clear_snooze")}
+                onClear={() => setSelectedIds(new Set())}
+              />
+            ) : null}
+            <ConversationList
+              conversations={conversations}
+              selectedId={selectedId}
+              onSelect={handleSelect}
+              selectedIds={selectedIds}
+              onToggleSelect={toggleSelect}
+            />
           </div>
           {/* Thread pane */}
-          <div className={`${selectedId ? "flex" : "hidden md:flex"} min-w-0 flex-1 flex-col`}>
+          <div className={`${selectedId ? "flex" : "hidden md:flex"} min-w-0 flex-1 flex-col border-r border-neutral-200`}>
             {selected ? (
               <ThreadView
                 conversation={selected}
                 token={token}
                 onBack={() => setSelectedId(null)}
                 onChanged={loadConversations}
+                onToggleSidebar={() => setShowSidebar((s) => !s)}
               />
             ) : (
               <div className="flex flex-1 items-center justify-center text-sm text-neutral-400">
@@ -150,6 +193,17 @@ export function Messaging() {
               </div>
             )}
           </div>
+          {/* Right sidebar — inline on wide screens, toggled drawer otherwise */}
+          {selected && showSidebar ? (
+            <div className="flex w-full max-w-xs flex-col border-l border-neutral-200 bg-white max-md:absolute max-md:inset-y-0 max-md:right-0 max-md:z-20 max-md:shadow-xl">
+              <ProspectSidebar
+                conversation={selected}
+                token={token}
+                onClose={() => setShowSidebar(false)}
+                onChanged={loadConversations}
+              />
+            </div>
+          ) : null}
         </div>
       )}
     </div>

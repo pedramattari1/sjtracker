@@ -27,6 +27,8 @@ const gmailSync = require('./lib/gmailSync');
 const quoted = require('./lib/quoted');
 const conversationNotes = require('./lib/conversationNotes');
 const conversationEvents = require('./lib/conversationEvents');
+const prospectCrm = require('./lib/prospectCrm');
+const snippets = require('./lib/snippets');
 
 const app = express();
 app.use(cors());               // CORS so the Vercel frontend can call this
@@ -137,6 +139,8 @@ async function initDb() {
   await conversationNotes.ensureTable(pool);   // Phase 2
   await conversationEvents.ensureTable(pool);  // Phase 2
   await messageAttachments.ensureTable(pool);  // Phase 2b
+  await prospectCrm.ensureTable(pool);         // Phase 3
+  await snippets.ensureTable(pool);            // Phase 3
   // Additive index to match inbound/prospect lookups by email (spec §4).
   await pool.query(
     "CREATE INDEX IF NOT EXISTS prospects_email_idx ON prospects ((lower(data->>'email')));",
@@ -431,7 +435,9 @@ app.get('/api/conversations/:id/messages', auth, async (req, res) => {
   } catch (e) { console.error(e); res.status(500).json({ error: 'read_failed' }); }
 });
 
-// Update a conversation (Phase 2: status; mark-read). Tag/snooze are Phase 3.
+// Update a conversation: status, mark-read (Phase 2); tag, snooze (Phase 3).
+// A field is changed only when its key is present in the body:
+//   status: string · read: true · tag: string|null · snoozed_until: ISO|null
 app.patch('/api/conversations/:id', auth, async (req, res) => {
   try {
     const { userId } = getAuth(req);
@@ -450,11 +456,106 @@ app.patch('/api/conversations/:id', auth, async (req, res) => {
       }
       changed = true;
     }
+
+    if (Object.prototype.hasOwnProperty.call(body, 'tag')) {
+      const tag = body.tag ? String(body.tag) : null;
+      const result = await conversations.setTag(pool, id, tag);
+      if (result && result.prev !== result.next) {
+        await conversationEvents.log(pool, {
+          conversationId: id, type: 'tag',
+          detail: tag ? `tagged ${tag}` : 'tag cleared', actorId: userId,
+        });
+      }
+      changed = true;
+    }
+
+    if (Object.prototype.hasOwnProperty.call(body, 'snoozed_until')) {
+      const until = body.snoozed_until ? String(body.snoozed_until) : null;
+      await conversations.setSnooze(pool, id, until, body.snooze_note ? String(body.snooze_note) : null);
+      await conversationEvents.log(pool, {
+        conversationId: id, type: 'snooze',
+        detail: until ? `snoozed until ${until}` : 'snooze cleared', actorId: userId,
+      });
+      changed = true;
+    }
+
     if (body.read === true) { await conversations.markRead(pool, id); changed = true; }
 
     if (!changed) return res.status(400).json({ error: 'nothing_to_update' });
     res.json(await conversations.getWithProspect(pool, id));
   } catch (e) { console.error('[conversations] patch failed:', e.message); res.status(500).json({ error: 'update_failed' }); }
+});
+
+// Bulk action over many conversations (Phase 3: status | tag | snooze | clear_snooze).
+app.post('/api/conversations/bulk', auth, async (req, res) => {
+  try {
+    const { userId } = getAuth(req);
+    const body = req.body || {};
+    const ids = Array.isArray(body.ids) ? body.ids.filter(Boolean) : [];
+    if (ids.length === 0) return res.status(400).json({ error: 'no_ids' });
+
+    let field;
+    let value;
+    let detail;
+    if (body.action === 'status') { field = 'status'; value = String(body.value || '').trim(); detail = `status → ${value}`; if (!value) return res.status(400).json({ error: 'missing_value' }); }
+    else if (body.action === 'tag') { field = 'tag'; value = body.value ? String(body.value) : null; detail = value ? `tagged ${value}` : 'tag cleared'; }
+    else if (body.action === 'snooze') { field = 'snooze'; value = body.value ? String(body.value) : null; detail = value ? `snoozed until ${value}` : 'snooze cleared'; }
+    else if (body.action === 'clear_snooze') { field = 'snooze'; value = null; detail = 'snooze cleared'; }
+    else return res.status(400).json({ error: 'bad_action' });
+
+    const n = await conversations.bulkUpdate(pool, ids, field, value);
+    for (const id of ids) {
+      await conversationEvents.log(pool, { conversationId: id, type: field, detail: `(bulk) ${detail}`, actorId: userId });
+    }
+    res.json({ ok: true, updated: n });
+  } catch (e) { console.error('[conversations] bulk failed:', e.message); res.status(500).json({ error: 'bulk_failed' }); }
+});
+
+// Unread badge count (excludes threads snoozed into the future).
+app.get('/api/conversations/unread-count', auth, async (_req, res) => {
+  try { res.json({ count: await conversations.countUnread(pool) }); }
+  catch (e) { console.error(e); res.status(500).json({ error: 'read_failed' }); }
+});
+
+// Prospect CRM facts (side table; prospects JSONB untouched).
+app.get('/api/prospects/:id/crm', auth, async (req, res) => {
+  try { res.json((await prospectCrm.get(pool, req.params.id)) || {}); }
+  catch (e) { console.error(e); res.status(500).json({ error: 'read_failed' }); }
+});
+
+app.put('/api/prospects/:id/crm', auth, async (req, res) => {
+  try {
+    const b = req.body || {};
+    const row = await prospectCrm.upsert(pool, req.params.id, {
+      timeframe: b.timeframe,
+      targetMoveMonth: b.target_move_month,
+      unitInterest: b.unit_interest,
+      budget: b.budget,
+      source: b.source,
+    });
+    res.json(row);
+  } catch (e) { console.error('[crm] upsert failed:', e.message); res.status(500).json({ error: 'update_failed' }); }
+});
+
+// Canned-reply snippets.
+app.get('/api/snippets', auth, async (_req, res) => {
+  try { res.json(await snippets.list(pool)); }
+  catch (e) { console.error(e); res.status(500).json({ error: 'read_failed' }); }
+});
+
+app.post('/api/snippets', auth, async (req, res) => {
+  try {
+    const { userId } = getAuth(req);
+    const name = (req.body && req.body.name ? String(req.body.name) : '').trim();
+    const bodyText = (req.body && req.body.body_text ? String(req.body.body_text) : '').trim();
+    if (!name || !bodyText) return res.status(400).json({ error: 'name_and_body_required' });
+    res.json(await snippets.add(pool, { name, bodyText, createdBy: userId }));
+  } catch (e) { console.error(e); res.status(500).json({ error: 'create_failed' }); }
+});
+
+app.delete('/api/snippets/:id', auth, async (req, res) => {
+  try { await snippets.remove(pool, req.params.id); res.json({ ok: true }); }
+  catch (e) { console.error(e); res.status(500).json({ error: 'delete_failed' }); }
 });
 
 // Conversation notes (internal; never emailed).

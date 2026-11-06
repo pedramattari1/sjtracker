@@ -109,6 +109,49 @@ async function markRead(pool, id) {
   await pool.query('UPDATE conversations SET unread = false WHERE id = $1', [id]);
 }
 
+/** Set (or clear, with null) the reply tag. Returns { prev, next } or null. */
+async function setTag(pool, id, tag) {
+  const cur = await pool.query('SELECT tag FROM conversations WHERE id = $1', [id]);
+  if (cur.rowCount === 0) return null;
+  const prev = cur.rows[0].tag;
+  await pool.query('UPDATE conversations SET tag = $2 WHERE id = $1', [id, tag || null]);
+  return { prev, next: tag || null };
+}
+
+/** Set (or clear) snooze. snoozedUntil null clears it. */
+async function setSnooze(pool, id, snoozedUntil, snoozeNote) {
+  const r = await pool.query(
+    'UPDATE conversations SET snoozed_until = $2, snooze_note = $3 WHERE id = $1',
+    [id, snoozedUntil || null, snoozeNote || null],
+  );
+  return r.rowCount > 0;
+}
+
+/** Count conversations currently unread AND not snoozed into the future. */
+async function countUnread(pool) {
+  const { rows } = await pool.query(
+    `SELECT COUNT(*)::int AS n FROM conversations
+      WHERE unread = true AND (snoozed_until IS NULL OR snoozed_until <= now())`,
+  );
+  return rows[0].n;
+}
+
+/**
+ * Apply one field change to many conversations. field is 'status'|'tag'|
+ * 'snooze'. For snooze, value is an ISO string or null (clear).
+ */
+async function bulkUpdate(pool, ids, field, value) {
+  if (!ids || ids.length === 0) return 0;
+  let sql;
+  let params;
+  if (field === 'status') { sql = 'UPDATE conversations SET status = $2 WHERE id = ANY($1::uuid[])'; params = [ids, value]; }
+  else if (field === 'tag') { sql = 'UPDATE conversations SET tag = $2 WHERE id = ANY($1::uuid[])'; params = [ids, value || null]; }
+  else if (field === 'snooze') { sql = 'UPDATE conversations SET snoozed_until = $2 WHERE id = ANY($1::uuid[])'; params = [ids, value || null]; }
+  else return 0;
+  const r = await pool.query(sql, params);
+  return r.rowCount;
+}
+
 async function listConversations(pool) {
   const { rows } = await pool.query(
     `SELECT c.*, a.email AS account_email,
@@ -156,6 +199,10 @@ module.exports = {
   markInboundReply,
   setStatus,
   markRead,
+  setTag,
+  setSnooze,
+  countUnread,
+  bulkUpdate,
   listConversations,
   getWithProspect,
 };

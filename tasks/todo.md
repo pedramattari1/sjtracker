@@ -4,6 +4,40 @@ Spec: `docs/nurture-spec.md`. Build-on-these facts in the spec header.
 
 ---
 
+# Phase 3 — Inbox power features  ✅ built, awaiting review
+
+Scope (§10 Phase 3 / §6). Bulk **suppress**→Phase 4, bulk **enroll**→Phase 5
+(approved deferral); Phase 3 bulk bar = status / tag / snooze / clear. Enrollment
+sidebar panel is a read-only placeholder until Phase 5.
+
+## Checklist
+- [x] `server/lib/prospectCrm.js` — `prospect_crm` table (FK text) + get/upsert + pure `computeReengageAt` (~60d before target; next_year/later only) + `test/prospectCrm.test.js` (ALL PASS)
+- [x] `server/lib/snippets.js` — `snippets` table + CRUD
+- [x] `server/lib/conversations.js` — `setTag`, `setSnooze`, `countUnread` (excludes future-snoozed), `bulkUpdate`
+- [x] `server/server.js` — ensureTable; PATCH extended (tag, snoozed_until/snooze_note, clears → events); `POST /api/conversations/bulk`; `GET …/unread-count`; `GET/PUT /api/prospects/:id/crm`; `GET/POST/DELETE /api/snippets`
+- [x] `web/src/lib/types.ts` — `ProspectCrm`, `Snippet`
+- [x] `web/src/lib/api.ts` — tag/snooze PATCH, bulk, unread-count, CRM get/put, snippets CRUD
+- [x] `web/src/lib/convoBadges.ts` — `TIMEFRAME_OPTIONS`
+- [x] `web/src/components/SnoozeMenu.tsx` — quick picks + custom date + clear (shared)
+- [x] `web/src/components/BulkActionBar.tsx` — set status / tag / snooze / clear
+- [x] `web/src/components/ProspectSidebar.tsx` — facts + timeframe (→ reengage), tag buttons, snooze state, status, enrollment placeholder
+- [x] `web/src/components/ConversationList.tsx` — multi-select checkboxes; future-snoozed hidden from active views (Snoozed filter shows them)
+- [x] `web/src/components/ThreadView.tsx` — quick-tag buttons, snooze control, snippet insert/new/delete, Details (sidebar) toggle
+- [x] `web/src/pages/Messaging.tsx` — three-pane (list | thread | sidebar; sidebar is a drawer on mobile) + selection state + bulk bar
+- [x] `web/src/components/AppShell.tsx` — unread badge on Messaging nav (polls count ~20s)
+
+## Review (results)
+- `node --check` all; `node test/prospectCrm.test.js` **ALL PASS**; cryptoBox/quoted/mime still PASS (all in `npm test` chain)
+- web `tsc` / `eslint src` clean; `vite build` succeeds
+- Not run (needs live Clerk + API + DB — you drive): snooze leaves/returns active; set tag; timeframe → reengage date; snippet insert/add/delete; nav badge; bulk status/tag/snooze.
+- Guardrails: additive `prospect_crm` + `snippets` only; `prospects` JSONB untouched; no new env vars; sends unchanged (thread-bound/Gmail-only).
+
+### Deferred
+- **Phase 4:** `suppressions` table + bulk suppress + send/enroll enforcement + the 40% promo / templates / pre-flight / first blast.
+- **Phase 5:** sequence engine → bulk enroll + the sidebar enrollment/next-send data (placeholder now).
+
+---
+
 # Phase 2b — Attachments + status affordance  ✅ built, awaiting review
 
 Attachments (send + view inbound) deferred from Phase 2, plus a thread-header

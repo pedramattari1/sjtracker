@@ -114,6 +114,27 @@ export interface ConversationEvent {
   created_at: string;
 }
 
+/** Nurture CRM facts per prospect (side table; prospect JSONB untouched). */
+export interface ProspectCrm {
+  prospect_id?: string;
+  timeframe?: string | null; // this_year | next_year | later | unknown
+  target_move_month?: string | null; // 'YYYY-MM'
+  reengage_at?: string | null;
+  unit_interest?: string | null;
+  budget?: string | null;
+  source?: string | null;
+  updated_at?: string | null;
+}
+
+/** A canned-reply snippet. */
+export interface Snippet {
+  id: string;
+  name: string;
+  body_text: string;
+  created_by: string | null;
+  created_at: string;
+}
+
 /** Conversation statuses (separate from the prospect's own status/stage). */
 export type ConversationStatus =
   | "new"
